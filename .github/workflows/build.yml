@@ -1,0 +1,112 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Build & validate ESP32-C6 Zigbee Router firmware with ESP-IDF 6.2
+#
+# Triggers:
+#   • push / PR targeting main
+#   • manual (workflow_dispatch)
+#
+# Jobs:
+#   build  – compiles the project, uploads .bin + size report as artefact
+# ─────────────────────────────────────────────────────────────────────────────
+name: Build ESP32-C6 Zigbee Router
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same branch/PR to save minutes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IDF_VERSION: v6.2.0          # Pin to the version used in sdkconfig.defaults
+  IDF_TARGET:  esp32c6
+  # IDF Component Manager stores downloaded components here
+  IDF_COMPONENT_CACHE_DIR: ~/.cache/idf-component-manager
+
+jobs:
+  build:
+    name: idf.py build (esp32c6)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive   # in case alarm_timer is added as submodule later
+
+      # ── 2. Cache: ESP-IDF toolchain (~1.4 GB, takes ~15 min cold) ──────────
+      - name: Cache ESP-IDF toolchain
+        id: cache-idf
+        uses: actions/cache@v4
+        with:
+          path: ~/.espressif
+          key: espressif-${{ env.IDF_VERSION }}-${{ runner.os }}
+          restore-keys: |
+            espressif-${{ env.IDF_VERSION }}-
+
+      # ── 3. Cache: IDF Component Manager downloads ──────────────────────────
+      - name: Cache IDF component manager
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.IDF_COMPONENT_CACHE_DIR }}
+          key: idf-components-${{ hashFiles('main/idf_component.yml') }}-${{ env.IDF_VERSION }}
+          restore-keys: |
+            idf-components-
+
+      # ── 4. Install ESP-IDF ─────────────────────────────────────────────────
+      # Uses the official Espressif action which handles install.sh + exports
+      - name: Install ESP-IDF ${{ env.IDF_VERSION }}
+        uses: espressif/esp-idf-ci-action@v1
+        id: idf-install
+        with:
+          esp_idf_version: ${{ env.IDF_VERSION }}
+          target: ${{ env.IDF_TARGET }}
+          # Pass the build command directly to the action
+          command: |
+            idf.py set-target ${{ env.IDF_TARGET }}
+            idf.py build
+
+      # ── 5. Build size report ───────────────────────────────────────────────
+      # Run only if build succeeded; produces a human-readable memory map
+      - name: Generate size report
+        if: success()
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ env.IDF_VERSION }}
+          target: ${{ env.IDF_TARGET }}
+          command: idf.py size >> build/size_report.txt
+
+      # ── 6. Upload artefacts ────────────────────────────────────────────────
+      - name: Upload firmware binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-esp32c6-${{ github.sha }}
+          path: |
+            build/*.bin
+            build/*.elf
+            build/*.map
+            build/size_report.txt
+          retention-days: 14
+
+      # ── 7. Upload build log on failure ────────────────────────────────────
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-failure-${{ github.run_id }}
+          path: build/
+          retention-days: 7
