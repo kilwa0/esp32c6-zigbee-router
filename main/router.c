@@ -35,8 +35,10 @@ static const char *TAG = "ROUTER ESP32C6";
 
 static led_strip_handle_t led_strip;
 
-static bool steering_retry_pending;
-static bool retry_with_initialization;
+/* Accedidas desde alarm_timer callbacks (timer task) y signal handler
+   (Zigbee main task): _Atomic garantiza visibilidad sin data race. */
+static _Atomic bool steering_retry_pending;
+static _Atomic bool retry_with_initialization;
 
 static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
