@@ -84,7 +84,15 @@ static esp_err_t register_router_endpoint(void)
         goto cleanup_dev;
     }
 
-    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_cluster_desc_create(EZB_ZCL_CLUSTER_SERVER);
+    /* API: ezb_zcl_basic_create_cluster_desc(const void *cfg, uint8_t role_mask)
+       Pasamos config explicita para fijar zcl_version y power_source
+       (atributos mandatorios del cluster Basic server). */
+    ezb_zcl_basic_cluster_server_config_t basic_cfg = {
+        .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
+        .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
+    };
+    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_create_cluster_desc(
+            &basic_cfg, EZB_ZCL_CLUSTER_SERVER);
     if (!basic_desc) {
         ESP_LOGE(TAG, "No se pudo crear Basic cluster desc");
         ret = ESP_ERR_NO_MEM;
