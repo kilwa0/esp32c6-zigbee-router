@@ -1,0 +1,11 @@
+## IDF Component Manager Manifest File
+dependencies:
+  ## Required IDF version
+  idf:
+    version: ">=5.2"
+  espressif/esp-zigbee-lib:
+    version: ">=2.0.0"
+  alarm_timer:
+    path: "/home/kilwa/.src/esp-zigbee-sdk/examples/utils/alarm_timer"
+  espressif/led_strip: "^3.0.0"
+
