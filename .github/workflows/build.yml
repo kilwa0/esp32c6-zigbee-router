@@ -74,6 +74,7 @@ jobs:
             idf.py
             -DIDF_COMPONENT_MANAGER_CACHE_DIR=${{ env.IDF_COMPONENT_CACHE_DIR }}
             set-target ${{ env.IDF_TARGET }}
+            fullclean
             build
             size
 
