@@ -11,10 +11,7 @@
 #include "esp_zigbee.h"
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
-#include "ezbee/zha.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
-#include "ezbee/zcl/cluster/identify_desc.h"
-#include "ezbee/zcl/cluster/on_off_desc.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -26,7 +23,7 @@ static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
-/* Colores del LED de estado (R, G, B) — valores 0-255 */
+/* Colores del LED de estado (R, G, B) -- valores 0-255 */
 #define LED_RED     16,  0,  0
 #define LED_GREEN    0, 16,  0
 #define LED_BLUE     0,  0, 16
@@ -49,7 +46,6 @@ static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 static void configure_led(void)
 {
     ESP_LOGI(TAG, "Configurando LED strip (RMT, GPIO %d)", LED_ESTADO_GPIO);
-    /* ESP32-C6 tiene RMT hardware — se usa directamente sin condicional Kconfig */
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_ESTADO_GPIO,
         .max_leds = 1,
@@ -62,61 +58,97 @@ static void configure_led(void)
     led_strip_clear(led_strip);
 }
 
+/* Registra un endpoint minimo con device ID 0x0008 (range_extender, HA profile).
+   Solo incluye el cluster Basic con manufacturer_name y model_identifier para
+   que el coordinador pueda identificar el nodo. Sin clusters de aplicacion. */
 static esp_err_t register_router_endpoint(void)
 {
+    esp_err_t ret = ESP_OK;
+
     ezb_af_device_desc_t dev_desc = ezb_af_create_device_desc();
     if (!dev_desc) {
         ESP_LOGE(TAG, "No se pudo crear device_desc");
         return ESP_ERR_NO_MEM;
     }
 
-    ezb_zha_on_off_switch_config_t switch_cfg = EZB_ZHA_ON_OFF_SWITCH_CONFIG();
-    switch_cfg.basic_cfg.power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS;
-
-    ezb_af_ep_desc_t ep_desc = ezb_zha_create_on_off_switch(ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID, &switch_cfg);
+    ezb_af_ep_config_t ep_config = {
+        .ep_id              = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
+        .app_profile_id     = EZB_AF_HA_PROFILE_ID,
+        .app_device_id      = 0x0008, /* range_extender */
+        .app_device_version = 0,
+    };
+    ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
     if (!ep_desc) {
-        ESP_LOGE(TAG, "No se pudo crear ep_desc ZHA");
-        return ESP_ERR_NO_MEM;
+        ESP_LOGE(TAG, "No se pudo crear ep_desc");
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_dev;
     }
 
-    ezb_zcl_cluster_desc_t basic_desc = ezb_af_endpoint_get_cluster_desc(
-        ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
+    /* API: ezb_zcl_basic_create_cluster_desc(const void *cfg, uint8_t role_mask)
+       Pasamos config explicita para fijar zcl_version y power_source
+       (atributos mandatorios del cluster Basic server). */
+    ezb_zcl_basic_cluster_server_config_t basic_cfg = {
+        .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
+        .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
+    };
+    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_create_cluster_desc(
+            &basic_cfg, EZB_ZCL_CLUSTER_SERVER);
     if (!basic_desc) {
-        ESP_LOGE(TAG, "No se pudo obtener Basic cluster desc");
-        return ESP_ERR_NOT_FOUND;
+        ESP_LOGE(TAG, "No se pudo crear Basic cluster desc");
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_ep;
     }
 
-    ESP_RETURN_ON_ERROR(
-        ezb_zcl_basic_cluster_desc_add_attr(
+    ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
             EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
-            (const void *)ESP_MANUFACTURER_NAME),
-        TAG, "No se pudo anadir ManufacturerName");
+            (const void *)ESP_MANUFACTURER_NAME);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir ManufacturerName: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
 
-    ESP_RETURN_ON_ERROR(
-        ezb_zcl_basic_cluster_desc_add_attr(
+    ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
             EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
-            (const void *)ESP_MODEL_IDENTIFIER),
-        TAG, "No se pudo anadir ModelIdentifier");
+            (const void *)ESP_MODEL_IDENTIFIER);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir ModelIdentifier: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
 
-    ESP_LOGI(TAG, "Endpoint: ep=%u profile=0x%04x device=0x%04x",
-             ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID, EZB_AF_HA_PROFILE_ID,
-             EZB_ZHA_ON_OFF_OUTPUT_DEVICE_ID);
-    ESP_LOGI(TAG, "Basic: manufacturer=%s model=%s power_source=0x%02x",
-             &ESP_MANUFACTURER_NAME[1],
-             &ESP_MODEL_IDENTIFIER[1],
-             switch_cfg.basic_cfg.power_source);
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+    /* basic_desc pertenece ahora a ep_desc */
 
-    ESP_RETURN_ON_ERROR(
-        ezb_af_device_add_endpoint_desc(dev_desc, ep_desc),
-        TAG, "No se pudo anadir endpoint desc");
+    ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
+        /* Ownership de ep_desc respecto a dev_desc es indeterminado tras fallo:
+           no llamar free_endpoint_desc por separado para evitar double-free. */
+        goto cleanup_dev;
+    }
+    /* ep_desc pertenece ahora a dev_desc */
 
-    ESP_RETURN_ON_ERROR(
-        ezb_af_device_desc_register(dev_desc),
-        TAG, "No se pudo registrar endpoint");
+    ret = ezb_af_device_desc_register(dev_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo registrar device desc: %s", esp_err_to_name(ret));
+        goto cleanup_dev;
+    }
+    /* dev_desc registrado: el stack es su dueno a partir de aqui */
 
+    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x (range_extender)",
+             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID, 0x0008);
     return ESP_OK;
+
+cleanup_ep:
+    ezb_af_free_endpoint_desc(ep_desc);
+cleanup_dev:
+    ezb_af_free_device_desc(dev_desc);
+    return ret;
 }
 
 static const char *bdb_status_to_str(ezb_bdb_comm_status_t status)
@@ -152,16 +184,22 @@ static void esp_zigbee_alarm_bdb_commissioning(alarm_timer_arg_t arg)
 static void send_first_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
+    /* alarm_timer callbacks se ejecutan en el timer task de FreeRTOS,
+       fuera de la Zigbee main task: lock obligatorio al acceder al stack. */
+    esp_zigbee_lock_acquire(portMAX_DELAY);
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
+    esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Device Announce enviado (first join)");
 }
 
 static void send_second_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
+    esp_zigbee_lock_acquire(portMAX_DELAY);
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
+    esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Device Announce reenviado (second announce)");
 }
 
@@ -278,10 +316,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 static void esp_zigbee_stack_main_task(void *pvParameters)
 {
     esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
-    static const uint8_t standard_tc_link_key[] = {
-        0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c,
-        0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39,
-    };
+    static const uint8_t standard_tc_link_key[] = ESP_ZIGBEE_TC_LINK_KEY;
 
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
 
