@@ -1,5 +1,5 @@
 # This file was generated using idf.py save-defconfig or menuconfig [D] key. It can be edited manually.
-# Espressif IoT Development Framework (ESP-IDF) 6.2.0 Project Minimal Configuration
+# Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
 #
 # default:
 CONFIG_IDF_TARGET="esp32c6"
@@ -14,10 +14,6 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 
 #
 # Component config
-#
-
-#
-# ESP PSRAM
 #
 
 #
@@ -104,17 +100,15 @@ CONFIG_ZB_ENABLED=y
 CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
 CONFIG_LOG_DEFAULT_LEVEL=4
 CONFIG_LOG_MAXIMUM_LEVEL=4
+# end of Logging
 
-# Logging
-CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
-CONFIG_LOG_DEFAULT_LEVEL=4
-CONFIG_LOG_MAXIMUM_LEVEL=4
-# end of ESP PSRAM
-
-CONFIG_BLINK_LED_GPIO=y
+# LED: el ESP32-C6 usa RMT hardware para el LED strip WS2812.
+# CONFIG_BLINK_LED_GPIO es incompatible con router.c que solo
+# compila los bloques BLINK_LED_STRIP_BACKEND_RMT / SPI.
+CONFIG_BLINK_LED_STRIP=y
+CONFIG_BLINK_LED_STRIP_BACKEND_RMT=y
 CONFIG_BLINK_GPIO=8
 CONFIG_ENV_GPIO_RANGE_MIN=0
 CONFIG_ENV_GPIO_RANGE_MAX=30
 CONFIG_ENV_GPIO_IN_RANGE_MAX=30
 CONFIG_ENV_GPIO_OUT_RANGE_MAX=30
-

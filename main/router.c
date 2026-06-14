@@ -18,61 +18,64 @@
 #include "freertos/task.h"
 #include "sdkconfig.h"
 
-
-
 #include "router.h"
-
-
 
 static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
-static led_strip_handle_t led_strip;
+/* Colores del LED de estado (R, G, B) — valores 0-255 */
+#define LED_RED     16,  0,  0   /* buscando red / error */
+#define LED_GREEN    0, 16,  0   /* conectado a la red */
+#define LED_BLUE     0,  0, 16   /* permit join activo */
+#define LED_BLUE_BDB 0,  0, 255  /* BDB init OK, pendiente steering */
+#define LED_WHITE   16, 16, 16   /* señal desconocida */
 
+static led_strip_handle_t led_strip;
 
 static bool steering_retry_pending;
 static bool retry_with_initialization;
 
+/* Helper: set LED color + refresh en una sola llamada */
+static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
+{
+    led_strip_set_pixel(led_strip, 0, r, g, b);
+    led_strip_refresh(led_strip);
+}
+
 static void configure_led(void)
 {
-    ESP_LOGI(TAG, "Example configured to blink addressable LED!");
-    /* LED strip initialization with the GPIO and pixels number*/
+    ESP_LOGI(TAG, "Configurando LED strip (RMT backend, GPIO %d)", LED_ESTADO_GPIO);
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_ESTADO_GPIO,
-        .max_leds = 1, // at least one LED on board
+        .max_leds = 1,
     };
-    #if CONFIG_BLINK_LED_STRIP_BACKEND_RMT
-        led_strip_rmt_config_t rmt_config = {
-            .resolution_hz = 10 * 1000 * 1000, // 10MHz
-            .flags.with_dma = false,
-        };
-        ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
-    #elif CONFIG_BLINK_LED_STRIP_BACKEND_SPI
-        led_strip_spi_config_t spi_config = {
-            .spi_bus = SPI2_HOST,
-            .flags.with_dma = true,
-        };
-        ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
-    #else
-    #error "unsupported LED strip backend"
-    #endif
-    /* Set all LED off to clear all pixels */
+#if CONFIG_BLINK_LED_STRIP_BACKEND_RMT
+    led_strip_rmt_config_t rmt_config = {
+        .resolution_hz = 10 * 1000 * 1000, /* 10 MHz */
+        .flags.with_dma = false,
+    };
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
+#elif CONFIG_BLINK_LED_STRIP_BACKEND_SPI
+    led_strip_spi_config_t spi_config = {
+        .spi_bus = SPI2_HOST,
+        .flags.with_dma = true,
+    };
+    ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
+#else
+#error "LED strip backend no soportado: definir CONFIG_BLINK_LED_STRIP_BACKEND_RMT o _SPI en sdkconfig.defaults"
+#endif
     led_strip_clear(led_strip);
 }
 
 static esp_err_t register_router_endpoint(void)
 {
-    /* Crear device descriptor */
     ezb_af_device_desc_t dev_desc = ezb_af_create_device_desc();
     if (!dev_desc) {
         ESP_LOGE(TAG, "No se pudo crear device_desc");
         return ESP_ERR_NO_MEM;
     }
 
-    /* EZB_ZHA_ON_OFF_SWITCH_CONFIG inicializa power_source=0x00 (UNKNOWN).
-       Sobreescribir a SINGLE_PHASE_MAINS para que la interfaz web pueda
-       identificar y gestionar el dispositivo correctamente. */
     ezb_zha_on_off_switch_config_t switch_cfg = EZB_ZHA_ON_OFF_SWITCH_CONFIG();
     switch_cfg.basic_cfg.power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS;
 
@@ -82,7 +85,6 @@ static esp_err_t register_router_endpoint(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Obtener el cluster Basic ya creado y anadir los atributos de identificacion */
     ezb_zcl_cluster_desc_t basic_desc = ezb_af_endpoint_get_cluster_desc(
         ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
     if (!basic_desc) {
@@ -126,22 +128,22 @@ static esp_err_t register_router_endpoint(void)
 static const char *bdb_status_to_str(ezb_bdb_comm_status_t status)
 {
     switch (status) {
-    case EZB_BDB_STATUS_SUCCESS:                  return "SUCCESS";
-    case EZB_BDB_STATUS_IN_PROGRESS:              return "IN_PROGRESS";
-    case EZB_BDB_STATUS_NOT_AA_CAPABLE:           return "NOT_AA_CAPABLE";
-    case EZB_BDB_STATUS_NO_NETWORK:               return "NO_NETWORK";
-    case EZB_BDB_STATUS_TARGET_FAILURE:           return "TARGET_FAILURE";
-    case EZB_BDB_STATUS_FORMATION_FAILURE:        return "FORMATION_FAILURE";
+    case EZB_BDB_STATUS_SUCCESS:                    return "SUCCESS";
+    case EZB_BDB_STATUS_IN_PROGRESS:                return "IN_PROGRESS";
+    case EZB_BDB_STATUS_NOT_AA_CAPABLE:             return "NOT_AA_CAPABLE";
+    case EZB_BDB_STATUS_NO_NETWORK:                 return "NO_NETWORK";
+    case EZB_BDB_STATUS_TARGET_FAILURE:             return "TARGET_FAILURE";
+    case EZB_BDB_STATUS_FORMATION_FAILURE:          return "FORMATION_FAILURE";
     case EZB_BDB_STATUS_NO_IDENTIFY_QUERY_RESPONSE: return "NO_IDENTIFY_QUERY_RESPONSE";
-    case EZB_BDB_STATUS_BINDING_TABLE_FULL:       return "BINDING_TABLE_FULL";
-    case EZB_BDB_STATUS_NO_SCAN_RESPONSE:         return "NO_SCAN_RESPONSE";
-    case EZB_BDB_STATUS_NOT_PERMITTED:            return "NOT_PERMITTED";
-    case EZB_BDB_STATUS_TCLK_EX_FAILURE:          return "TCLK_EX_FAILURE";
-    case EZB_BDB_STATUS_NOT_ON_A_NETWORK:         return "NOT_ON_A_NETWORK";
-    case EZB_BDB_STATUS_ON_A_NETWORK:             return "ON_A_NETWORK";
-    case EZB_BDB_STATUS_CANCELLED:                return "CANCELLED";
-    case EZB_BDB_STATUS_DEV_ANNCE_SEND_FAILURE:   return "DEV_ANNCE_SEND_FAILURE";
-    default:                                       return "UNKNOWN";
+    case EZB_BDB_STATUS_BINDING_TABLE_FULL:         return "BINDING_TABLE_FULL";
+    case EZB_BDB_STATUS_NO_SCAN_RESPONSE:           return "NO_SCAN_RESPONSE";
+    case EZB_BDB_STATUS_NOT_PERMITTED:              return "NOT_PERMITTED";
+    case EZB_BDB_STATUS_TCLK_EX_FAILURE:            return "TCLK_EX_FAILURE";
+    case EZB_BDB_STATUS_NOT_ON_A_NETWORK:           return "NOT_ON_A_NETWORK";
+    case EZB_BDB_STATUS_ON_A_NETWORK:               return "ON_A_NETWORK";
+    case EZB_BDB_STATUS_CANCELLED:                  return "CANCELLED";
+    case EZB_BDB_STATUS_DEV_ANNCE_SEND_FAILURE:     return "DEV_ANNCE_SEND_FAILURE";
+    default:                                         return "UNKNOWN";
     }
 }
 
@@ -150,23 +152,40 @@ static void esp_zigbee_alarm_bdb_commissioning(alarm_timer_arg_t arg)
     esp_zigbee_lock_acquire(portMAX_DELAY);
     (void)ezb_bdb_start_top_level_commissioning(arg);
     esp_zigbee_lock_release();
-
-    /* Any scheduled retry has now been dispatched; allow a new retry cycle. */
     steering_retry_pending = false;
+}
+
+/*
+ * Callbacks diferidos para los Device Announce post-join.
+ * Usando alarm_timer en lugar de vTaskDelay para no bloquear
+ * el loop principal de la stack Zigbee (riesgo de WDT reset).
+ */
+static void send_first_announce(alarm_timer_arg_t arg)
+{
+    (void)arg;
+    ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
+    ezb_zdo_device_annce_req(&annce);
+    ESP_LOGI(TAG, "Device Announce enviado (first join)");
+}
+
+static void send_second_announce(alarm_timer_arg_t arg)
+{
+    (void)arg;
+    ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
+    ezb_zdo_device_annce_req(&annce);
+    ESP_LOGI(TAG, "Device Announce reenviado (second announce)");
 }
 
 static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 {
     ezb_app_signal_type_t signal_type = ezb_app_signal_get_type(app_signal);
-    led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-    led_strip_refresh(led_strip);
+    set_led(LED_RED);
 
     switch (signal_type) {
     case EZB_ZDO_SIGNAL_SKIP_STARTUP:
         ESP_LOGI(TAG, "Inicializando Router Zigbee Puro...");
         ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_INITIALIZATION);
-        led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-        led_strip_refresh(led_strip);
+        set_led(LED_RED);
         break;
 
     case EZB_BDB_SIGNAL_DEVICE_FIRST_START:
@@ -177,14 +196,12 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                  bdb_status_to_str(status), status);
         if (status == EZB_BDB_STATUS_SUCCESS) {
             ESP_LOGI(TAG, "BDB init OK. Factory new: %s", ezb_bdb_is_factory_new() ? "si" : "no");
-            led_strip_set_pixel(led_strip, 0, 0, 0, 255);
+            set_led(LED_BLUE_BDB);
             if (ezb_bdb_is_factory_new()) {
                 ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
             } else {
                 ESP_LOGI(TAG, "=== ROUTER RECONECTADO A LA RED ===");
-                led_strip_set_pixel(led_strip, 0, 0, 16, 0);
-                /* Refresh the strip to send data */
-                led_strip_refresh(led_strip);
+                set_led(LED_GREEN);
                 ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
                 ezb_zdo_device_annce_req(&annce);
                 ESP_LOGI(TAG, "Device Announce enviado (rejoin)");
@@ -203,54 +220,41 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
             ezb_nwk_get_extended_panid(&extended_pan_id);
             ESP_LOGI(TAG, "=== JOIN OK: PAN 0x%04hx, Canal %d, Addr 0x%04hx ===",
                      ezb_nwk_get_panid(), ezb_nwk_get_current_channel(), ezb_nwk_get_short_address());
-            led_strip_set_pixel(led_strip, 0, 0, 16, 0);
-            led_strip_refresh(led_strip);
+            set_led(LED_GREEN);
 
-            vTaskDelay(pdMS_TO_TICKS(3000));
-
-            ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
-            ezb_zdo_device_annce_req(&annce);
-            ESP_LOGI(TAG, "Device Announce enviado (first join)");
-
-            vTaskDelay(pdMS_TO_TICKS(5000));
-
-            ezb_zdo_device_annce_req(&annce);
-            ESP_LOGI(TAG, "Device Announce reenviado (second announce)");
+            /* FIX CRÍTICO: sustituidos vTaskDelay(3000) + vTaskDelay(5000) por
+             * alarm_timer_schedule. Los vTaskDelay bloqueaban el loop de la
+             * stack Zigbee 8s, provocando pérdida de mensajes y riesgo de WDT. */
+            alarm_timer_schedule(send_first_announce,  0, 3000);
+            alarm_timer_schedule(send_second_announce, 0, 8000); /* 3000 + 5000 */
         } else {
             if (steering_retry_pending) {
                 break;
             }
             ESP_LOGW(TAG, "Steering fallo (%s / 0x%02x). Reintento en 5s...", bdb_status_to_str(status), status);
             if (status == EZB_BDB_STATUS_NO_NETWORK) {
-                ESP_LOGW(TAG, "No se encontro red Zigbee: verificar que el coordinador este en modo emparejamiento y dentro de rango");
+                ESP_LOGW(TAG, "No se encontro red Zigbee: verificar coordinador en modo emparejamiento y dentro de rango");
                 ESP_LOGI(TAG, "Siguiente reintento: %s", retry_with_initialization ? "INITIALIZATION" : "NETWORK_STEERING");
-                led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-                led_strip_refresh(led_strip);
+                set_led(LED_RED);
             } else if (status == EZB_BDB_STATUS_NOT_PERMITTED) {
                 ESP_LOGW(TAG, "Join no permitido por el coordinador (permit join cerrado)");
-                led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-                led_strip_refresh(led_strip);
+                set_led(LED_RED);
             } else if (status == EZB_BDB_STATUS_TARGET_FAILURE) {
                 ESP_LOGW(TAG, "Fallo de join: el coordinador rechazo la solicitud de join");
-                led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-                led_strip_refresh(led_strip);
+                set_led(LED_RED);
             } else if (status == EZB_BDB_STATUS_TCLK_EX_FAILURE) {
                 ESP_LOGW(TAG, "Fallo intercambio de Trust Center Link Key: revisar politica de seguridad del coordinador");
             }
             if (!steering_retry_pending) {
                 alarm_timer_arg_t next_mode = EZB_BDB_MODE_NETWORK_STEERING;
-
                 if (status == EZB_BDB_STATUS_NO_NETWORK && retry_with_initialization) {
                     next_mode = EZB_BDB_MODE_INITIALIZATION;
-                    led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-                    led_strip_refresh(led_strip);
+                    set_led(LED_RED);
                 }
                 steering_retry_pending = true;
                 alarm_timer_schedule(esp_zigbee_alarm_bdb_commissioning, next_mode, 5000);
-
                 if (status == EZB_BDB_STATUS_NO_NETWORK) {
-                    led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-                    led_strip_refresh(led_strip);
+                    set_led(LED_RED);
                     retry_with_initialization = !retry_with_initialization;
                 }
             }
@@ -258,23 +262,19 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
     } break;
 
     case EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS: {
-        
         uint8_t duration = *(uint8_t *)ezb_app_signal_get_params(app_signal);
         if (duration > 0) {
             ESP_LOGI(TAG, "Permit join activo en PAN 0x%04hx durante %u s", ezb_nwk_get_panid(), duration);
-            led_strip_set_pixel(led_strip, 0, 0, 0, 16);
-            led_strip_refresh(led_strip);
+            set_led(LED_BLUE);
         } else {
             ESP_LOGW(TAG, "Permit join cerrado en PAN 0x%04hx", ezb_nwk_get_panid());
-            led_strip_set_pixel(led_strip, 0, 0, 16, 0);
-            led_strip_refresh(led_strip);
+            set_led(LED_GREEN);
         }
     } break;
 
     case EZB_ZDO_SIGNAL_LEAVE:
         ESP_LOGW(TAG, "Dispositivo salio de la red");
-        led_strip_set_pixel(led_strip, 0, 16, 0, 0);
-        led_strip_refresh(led_strip);
+        set_led(LED_RED);
         break;
 
     case EZB_ZDO_SIGNAL_LEAVE_INDICATION: {
@@ -284,8 +284,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 
     default:
         ESP_LOGI(TAG, "ZB signal: %s (0x%02x)", ezb_app_signal_to_string(signal_type), signal_type);
-        led_strip_set_pixel(led_strip, 0, 16, 16, 16);
-        led_strip_refresh(led_strip);
+        set_led(LED_WHITE);
         break;
     }
     return true;
@@ -318,7 +317,9 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
 
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
-    esp_zigbee_deinit();
+
+    /* FIX CRÍTICO: eliminada la segunda llamada a esp_zigbee_deinit().
+     * Double-free sobre recursos ya liberados → crash garantizado. */
     esp_zigbee_deinit();
     vTaskDelete(NULL);
 }
@@ -330,13 +331,15 @@ void app_main(void)
     ESP_LOGI(TAG, "app_main: antes de init");
 
     ESP_ERROR_CHECK(nvs_flash_init());
-
     ESP_ERROR_CHECK(nvs_flash_init_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME));
 
-    ESP_LOGI(TAG, "Arrancando Router Zigbee Puro Verano");
-    ESP_LOGI(TAG, "app_main: antes de xTaskCreate");
-    BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main", 4096, NULL, 5, NULL);
-    ESP_LOGI(TAG, "app_main: xTaskCreate=%ld (pdPASS=%ld)", (long)ok, (long)pdPASS);
+    ESP_LOGI(TAG, "Arrancando Router Zigbee Puro");
 
-    ESP_LOGI(TAG, "app_main: xTaskCreate=%ld", (long)ok);
+    /* FIX IMPORTANTE: stack size 4096 → 8192 bytes.
+     * Espressif recomienda >= 6144-8192 para tareas con
+     * esp_zigbee_launch_mainloop(). Con 4096 hay riesgo de
+     * stack overflow silencioso. */
+    BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main", 8192, NULL, 5, NULL);
+    ESP_LOGI(TAG, "app_main: xTaskCreate=%ld (pdPASS=%ld)", (long)ok, (long)pdPASS);
+    /* FIX ESTILO: eliminado el segundo log duplicado de xTaskCreate */
 }
