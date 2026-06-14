@@ -14,7 +14,6 @@
 #include "ezbee/zha.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
 #include "ezbee/zcl/cluster/identify_desc.h"
-#include "ezbee/zcl/cluster/on_off_desc.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -49,7 +48,6 @@ static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 static void configure_led(void)
 {
     ESP_LOGI(TAG, "Configurando LED strip (RMT, GPIO %d)", LED_ESTADO_GPIO);
-    /* ESP32-C6 tiene RMT hardware — se usa directamente sin condicional Kconfig */
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_ESTADO_GPIO,
         .max_leds = 1,
@@ -71,35 +69,33 @@ static esp_err_t register_router_endpoint(void)
     }
 
     /*
-     * Se crea el endpoint con la config de on_off_switch (Basic + Identify,
-     * identico a range_extender) y luego se sobreescribe el app_device_id
-     * a EZB_ZHA_RANGE_EXTENDER_DEVICE_ID (0x0008) via af API, ya que ezbee
-     * no expone ezb_zha_create_range_extender() directamente.
+     * Construimos el endpoint a mano para garantizar que app_device_id
+     * sea 0x0008 (Range Extender) desde el primer momento, sin depender
+     * de que ezb_af_ep_desc_set_app_device_id() sobreescriba un valor
+     * ya fijado por ezb_zha_create_on_off_switch().
+     *
+     * Un Range Extender ZHA solo necesita Basic (server) e Identify (server).
      */
-    ezb_zha_on_off_switch_config_t ep_cfg = EZB_ZHA_ON_OFF_SWITCH_CONFIG();
-    ep_cfg.basic_cfg.power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS;
-
-    ezb_af_ep_desc_t ep_desc = ezb_zha_create_on_off_switch(ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID, &ep_cfg);
+    ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(
+        ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID,
+        EZB_AF_HA_PROFILE_ID,
+        EZB_ZHA_RANGE_EXTENDER_DEVICE_ID,
+        0 /* device_version */);
     if (!ep_desc) {
-        ESP_LOGE(TAG, "No se pudo crear ep_desc ZHA");
+        ESP_LOGE(TAG, "No se pudo crear ep_desc");
+        ezb_af_free_device_desc(dev_desc);
         return ESP_ERR_NO_MEM;
     }
 
-    /* Sobreescribir device ID: Range Extender (ZHA 0x0008) */
-    ezb_err_t err = ezb_af_ep_desc_set_app_device_id(ep_desc, EZB_ZHA_RANGE_EXTENDER_DEVICE_ID);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo fijar device ID a Range Extender (0x%04x): err=0x%x",
-                 EZB_ZHA_RANGE_EXTENDER_DEVICE_ID, err);
+    /* Basic cluster (server) */
+    ezb_zcl_basic_cluster_cfg_t basic_cfg = EZB_ZCL_BASIC_CLUSTER_CFG();
+    basic_cfg.power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS;
+    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_cluster_desc_create(&basic_cfg);
+    if (!basic_desc) {
+        ESP_LOGE(TAG, "No se pudo crear Basic cluster desc");
         ezb_af_free_endpoint_desc(ep_desc);
         ezb_af_free_device_desc(dev_desc);
-        return ESP_FAIL;
-    }
-
-    ezb_zcl_cluster_desc_t basic_desc = ezb_af_endpoint_get_cluster_desc(
-        ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
-    if (!basic_desc) {
-        ESP_LOGE(TAG, "No se pudo obtener Basic cluster desc");
-        return ESP_ERR_NOT_FOUND;
+        return ESP_ERR_NO_MEM;
     }
 
     ESP_RETURN_ON_ERROR(
@@ -116,13 +112,32 @@ static esp_err_t register_router_endpoint(void)
             (const void *)ESP_MODEL_IDENTIFIER),
         TAG, "No se pudo anadir ModelIdentifier");
 
+    ESP_RETURN_ON_ERROR(
+        ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc),
+        TAG, "No se pudo anadir Basic cluster al endpoint");
+
+    /* Identify cluster (server) */
+    ezb_zcl_identify_cluster_cfg_t identify_cfg = EZB_ZCL_IDENTIFY_CLUSTER_CFG();
+    ezb_zcl_cluster_desc_t identify_desc = ezb_zcl_identify_cluster_desc_create(&identify_cfg);
+    if (!identify_desc) {
+        ESP_LOGE(TAG, "No se pudo crear Identify cluster desc");
+        ezb_af_free_endpoint_desc(ep_desc);
+        ezb_af_free_device_desc(dev_desc);
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_RETURN_ON_ERROR(
+        ezb_af_endpoint_add_cluster_desc(ep_desc, identify_desc),
+        TAG, "No se pudo anadir Identify cluster al endpoint");
+
     ESP_LOGI(TAG, "Endpoint: ep=%u profile=0x%04x device=0x%04x (Range Extender)",
-             ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID, EZB_AF_HA_PROFILE_ID,
+             ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID,
+             EZB_AF_HA_PROFILE_ID,
              EZB_ZHA_RANGE_EXTENDER_DEVICE_ID);
     ESP_LOGI(TAG, "Basic: manufacturer=%s model=%s power_source=0x%02x",
              &ESP_MANUFACTURER_NAME[1],
              &ESP_MODEL_IDENTIFIER[1],
-             ep_cfg.basic_cfg.power_source);
+             basic_cfg.power_source);
 
     ESP_RETURN_ON_ERROR(
         ezb_af_device_add_endpoint_desc(dev_desc, ep_desc),
