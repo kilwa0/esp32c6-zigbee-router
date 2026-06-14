@@ -4,7 +4,7 @@ menu "Example Configuration"
 
     choice BLINK_LED
         prompt "Blink LED type"
-        default BLINK_LED_GPIO
+        default BLINK_LED_STRIP
         help
             Select the LED type. A normal level controlled LED or an addressable LED strip.
             The default selection is based on the Espressif DevKit boards.
