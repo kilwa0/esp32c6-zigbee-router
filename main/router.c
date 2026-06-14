@@ -87,7 +87,7 @@ static esp_err_t register_router_endpoint(void)
 
     /* Sobreescribir device ID: Range Extender (ZHA 0x0008) */
     ezb_err_t err = ezb_af_ep_desc_set_app_device_id(ep_desc, EZB_ZHA_RANGE_EXTENDER_DEVICE_ID);
-    if (err != EZB_OK) {
+    if (err != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo fijar device ID a Range Extender (0x%04x): err=0x%x",
                  EZB_ZHA_RANGE_EXTENDER_DEVICE_ID, err);
         ezb_af_free_endpoint_desc(ep_desc);
