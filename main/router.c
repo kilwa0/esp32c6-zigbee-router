@@ -5,6 +5,8 @@
 #include "nvs_flash.h"
 #include "alarm_timer.h"
 #include "led_strip.h"
+#include "led_strip_types.h"
+#include "led_strip_rmt.h"
 #include "driver/gpio.h"
 #include "esp_zigbee.h"
 #include "ezbee/secur.h"
@@ -25,18 +27,17 @@ static const char *TAG = "ROUTER ESP32C6";
 #define LED_ESTADO_GPIO 8
 
 /* Colores del LED de estado (R, G, B) — valores 0-255 */
-#define LED_RED     16,  0,  0   /* buscando red / error */
-#define LED_GREEN    0, 16,  0   /* conectado a la red */
-#define LED_BLUE     0,  0, 16   /* permit join activo */
-#define LED_BLUE_BDB 0,  0, 255  /* BDB init OK, pendiente steering */
-#define LED_WHITE   16, 16, 16   /* señal desconocida */
+#define LED_RED     16,  0,  0
+#define LED_GREEN    0, 16,  0
+#define LED_BLUE     0,  0, 16
+#define LED_BLUE_BDB 0,  0, 255
+#define LED_WHITE   16, 16, 16
 
 static led_strip_handle_t led_strip;
 
 static bool steering_retry_pending;
 static bool retry_with_initialization;
 
-/* Helper: set LED color + refresh en una sola llamada */
 static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
     led_strip_set_pixel(led_strip, 0, r, g, b);
@@ -45,26 +46,17 @@ static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 
 static void configure_led(void)
 {
-    ESP_LOGI(TAG, "Configurando LED strip (RMT backend, GPIO %d)", LED_ESTADO_GPIO);
+    ESP_LOGI(TAG, "Configurando LED strip (RMT, GPIO %d)", LED_ESTADO_GPIO);
+    /* ESP32-C6 tiene RMT hardware — se usa directamente sin condicional Kconfig */
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_ESTADO_GPIO,
         .max_leds = 1,
     };
-#if CONFIG_BLINK_LED_STRIP_BACKEND_RMT
     led_strip_rmt_config_t rmt_config = {
-        .resolution_hz = 10 * 1000 * 1000, /* 10 MHz */
+        .resolution_hz = 10 * 1000 * 1000,
         .flags.with_dma = false,
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
-#elif CONFIG_BLINK_LED_STRIP_BACKEND_SPI
-    led_strip_spi_config_t spi_config = {
-        .spi_bus = SPI2_HOST,
-        .flags.with_dma = true,
-    };
-    ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
-#else
-#error "LED strip backend no soportado: definir CONFIG_BLINK_LED_STRIP_BACKEND_RMT o _SPI en sdkconfig.defaults"
-#endif
     led_strip_clear(led_strip);
 }
 
@@ -155,11 +147,6 @@ static void esp_zigbee_alarm_bdb_commissioning(alarm_timer_arg_t arg)
     steering_retry_pending = false;
 }
 
-/*
- * Callbacks diferidos para los Device Announce post-join.
- * Usando alarm_timer en lugar de vTaskDelay para no bloquear
- * el loop principal de la stack Zigbee (riesgo de WDT reset).
- */
 static void send_first_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
@@ -221,12 +208,8 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
             ESP_LOGI(TAG, "=== JOIN OK: PAN 0x%04hx, Canal %d, Addr 0x%04hx ===",
                      ezb_nwk_get_panid(), ezb_nwk_get_current_channel(), ezb_nwk_get_short_address());
             set_led(LED_GREEN);
-
-            /* FIX CRÍTICO: sustituidos vTaskDelay(3000) + vTaskDelay(5000) por
-             * alarm_timer_schedule. Los vTaskDelay bloqueaban el loop de la
-             * stack Zigbee 8s, provocando pérdida de mensajes y riesgo de WDT. */
             alarm_timer_schedule(send_first_announce,  0, 3000);
-            alarm_timer_schedule(send_second_announce, 0, 8000); /* 3000 + 5000 */
+            alarm_timer_schedule(send_second_announce, 0, 8000);
         } else {
             if (steering_retry_pending) {
                 break;
@@ -318,8 +301,6 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
 
-    /* FIX CRÍTICO: eliminada la segunda llamada a esp_zigbee_deinit().
-     * Double-free sobre recursos ya liberados → crash garantizado. */
     esp_zigbee_deinit();
     vTaskDelete(NULL);
 }
@@ -335,11 +316,6 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Arrancando Router Zigbee Puro");
 
-    /* FIX IMPORTANTE: stack size 4096 → 8192 bytes.
-     * Espressif recomienda >= 6144-8192 para tareas con
-     * esp_zigbee_launch_mainloop(). Con 4096 hay riesgo de
-     * stack overflow silencioso. */
     BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main", 8192, NULL, 5, NULL);
     ESP_LOGI(TAG, "app_main: xTaskCreate=%ld (pdPASS=%ld)", (long)ok, (long)pdPASS);
-    /* FIX ESTILO: eliminado el segundo log duplicado de xTaskCreate */
 }
