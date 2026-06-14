@@ -17,11 +17,6 @@
 name: Build ESP32-C6 Zigbee Router
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
   pull_request:
     branches: [main]
     paths-ignore:
