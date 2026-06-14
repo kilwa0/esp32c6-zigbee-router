@@ -1,52 +1,17 @@
-# This file was generated using idf.py save-defconfig or menuconfig [D] key. It can be edited manually.
-# Espressif IoT Development Framework (ESP-IDF) 6.2.0 Project Minimal Configuration
-#
-# default:
+# Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
 CONFIG_IDF_TARGET="esp32c6"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 
-#
 # Partition Table
-#
 CONFIG_PARTITION_TABLE_CUSTOM=y
-# end of Partition Table
 
-#
-# Component config
-#
-
-#
-# ESP PSRAM
-#
-
-#
 # mbedTLS
-#
-
-#
-# Certificates
-#
 CONFIG_MBEDTLS_X509_RSASSA_PSS_SUPPORT=n
-# end of Certificates
-
-#
-# TLS Protocol Configuration
-#
-
-#
-# TLS Key Exchange Configuration
-#
 CONFIG_MBEDTLS_PSK_MODES=y
 CONFIG_MBEDTLS_KEY_EXCHANGE_RSA_PSK=y
 CONFIG_MBEDTLS_KEY_EXCHANGE_RSA=n
 CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_RSA=n
-# end of TLS Key Exchange Configuration
-# end of TLS Protocol Configuration
-
-#
-# Symmetric Ciphers
-#
 CONFIG_MBEDTLS_CIPHER_MODE_CBC=n
 CONFIG_MBEDTLS_CIPHER_MODE_CFB=n
 CONFIG_MBEDTLS_CIPHER_MODE_CTR=n
@@ -54,67 +19,31 @@ CONFIG_MBEDTLS_CIPHER_MODE_OFB=n
 CONFIG_MBEDTLS_CIPHER_MODE_XTS=n
 CONFIG_MBEDTLS_GCM_C=n
 CONFIG_MBEDTLS_AES_ONLY_128_BIT_KEY_LENGTH=y
-# end of Symmetric Ciphers
-
-#
-# Asymmetric Ciphers
-#
 CONFIG_MBEDTLS_RSA_C=n
-
-#
-# Supported Curves
-#
 CONFIG_MBEDTLS_ECP_DP_SECP384R1_ENABLED=n
 CONFIG_MBEDTLS_ECP_DP_SECP521R1_ENABLED=n
 CONFIG_MBEDTLS_ECP_DP_SECP256K1_ENABLED=n
 CONFIG_MBEDTLS_ECP_DP_BP256R1_ENABLED=n
 CONFIG_MBEDTLS_ECP_DP_BP384R1_ENABLED=n
 CONFIG_MBEDTLS_ECP_DP_BP512R1_ENABLED=n
-# end of Supported Curves
-# end of Asymmetric Ciphers
-
-#
-# Hash functions
-#
 CONFIG_MBEDTLS_MD5_C=n
 CONFIG_MBEDTLS_SHA1_C=n
 CONFIG_MBEDTLS_SHA384_C=n
 CONFIG_MBEDTLS_SHA512_C=n
-# end of Hash functions
-
-#
-# Entropy and Random Number Generation
-#
 CONFIG_MBEDTLS_HMAC_DRBG_C=n
-# end of Entropy and Random Number Generation
-# end of mbedTLS
 
-#
 # Zigbee
-#
 CONFIG_ZB_ENABLED=y
-# end of Zigbee
 
 # Wireless Coexistence
-# CONFIG_ESP_COEX_ENABLED is not set
-# CONFIG_ESP_COEX_SW_COEXIST_ENABLE is not set
-# end of Wireless Coexistence
+CONFIG_ESP_COEX_ENABLED=n
 
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
 CONFIG_LOG_DEFAULT_LEVEL=4
 CONFIG_LOG_MAXIMUM_LEVEL=4
 
-# Logging
-CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
-CONFIG_LOG_DEFAULT_LEVEL=4
-CONFIG_LOG_MAXIMUM_LEVEL=4
-# end of ESP PSRAM
-
-CONFIG_BLINK_LED_GPIO=y
+# LED strip: ESP32-C6 usa RMT hardware (siempre disponible)
+CONFIG_BLINK_LED_STRIP=y
+CONFIG_BLINK_LED_STRIP_BACKEND_RMT=y
 CONFIG_BLINK_GPIO=8
-CONFIG_ENV_GPIO_RANGE_MIN=0
-CONFIG_ENV_GPIO_RANGE_MAX=30
-CONFIG_ENV_GPIO_IN_RANGE_MAX=30
-CONFIG_ENV_GPIO_OUT_RANGE_MAX=30
-

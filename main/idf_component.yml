@@ -3,9 +3,20 @@ dependencies:
   ## Required IDF version
   idf:
     version: ">=5.2"
+
+  ## Zigbee library — available in the Espressif component registry
   espressif/esp-zigbee-lib:
     version: ">=2.0.0"
-  alarm_timer:
-    path: "/home/kilwa/.src/esp-zigbee-sdk/examples/utils/alarm_timer"
-  espressif/led_strip: "^3.0.0"
 
+  ## alarm_timer — lives in esp-zigbee-sdk/examples/utils/alarm_timer.
+  ## It is NOT published as a standalone component in the registry.
+  ## Fetch it directly from the Git repo using the `git` + `path` syntax
+  ## (idf-component-manager >=2.x feature).
+  ## All official Espressif examples use path: "../../../utils/alarm_timer"
+  ## pointing to the same source; here we pull it from the canonical repo.
+  alarm_timer:
+    git: https://github.com/espressif/esp-zigbee-sdk.git
+    path: examples/utils/alarm_timer
+
+  ## LED strip driver
+  espressif/led_strip: "^3.0.0"

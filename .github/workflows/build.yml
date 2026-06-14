@@ -1,0 +1,74 @@
+name: Build ESP32-C6 Zigbee Router
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IDF_VERSION: release-v5.4
+  IDF_TARGET:  esp32c6
+  IDF_COMPONENT_CACHE_DIR: /tmp/idf_component_cache
+
+jobs:
+  build:
+    name: idf.py build (esp32c6)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache IDF component manager
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.IDF_COMPONENT_CACHE_DIR }}
+          key: idf-components-${{ env.IDF_VERSION }}-${{ hashFiles('main/idf_component.yml') }}
+          restore-keys: |
+            idf-components-${{ env.IDF_VERSION }}-
+            idf-components-
+
+      # NOTA: se elimina 'set-target' y 'fullclean'.
+      # 'set-target' regenera sdkconfig desde cero ignorando sdkconfig.defaults.
+      # El target lo lee idf.py directamente de CONFIG_IDF_TARGET en sdkconfig.defaults.
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ env.IDF_VERSION }}
+          target: ${{ env.IDF_TARGET }}
+          path: '.'
+          command: >
+            idf.py
+            -DIDF_COMPONENT_MANAGER_CACHE_DIR=${{ env.IDF_COMPONENT_CACHE_DIR }}
+            build
+            size
+
+      - name: Upload firmware binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-esp32c6-${{ github.sha }}
+          path: |
+            build/*.bin
+            build/*.elf
+            build/*.map
+            build/size_summary.json
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-failure-${{ github.run_id }}
+          path: build/
+          retention-days: 7
