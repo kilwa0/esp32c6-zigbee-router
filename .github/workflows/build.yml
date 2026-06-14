@@ -1,12 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Build & validate ESP32-C6 Zigbee Router firmware with ESP-IDF 6.2
+# Build & validate ESP32-C6 Zigbee Router firmware
+#
+# IDF version note:
+#   sdkconfig.defaults says "ESP-IDF 6.2.0" in a generated comment, but
+#   that only reflects the local toolchain used to run idf.py save-defconfig.
+#   idf_component.yml declares compatibility with IDF >=5.2.
+#   espressif/idf:v6.2.0 does NOT exist on Docker Hub (as of 2026-06).
+#   Valid tag formats: release-vX.Y | vX.Y.Z  (must exist on Docker Hub)
+#   Check available tags: https://hub.docker.com/r/espressif/idf/tags
+#   Update IDF_VERSION below when Espressif publishes a newer image.
 #
 # Triggers:
-#   • push / PR targeting main
+#   • push / PR targeting main (skips docs-only changes)
 #   • manual (workflow_dispatch)
-#
-# Jobs:
-#   build  – compiles the project, uploads .bin + size report as artefact
 # ─────────────────────────────────────────────────────────────────────────────
 name: Build ESP32-C6 Zigbee Router
 
@@ -23,16 +29,17 @@ on:
       - 'LICENSE'
   workflow_dispatch:
 
-# Cancel in-flight runs for the same branch/PR to save minutes
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  IDF_VERSION: v6.2.0          # Pin to the version used in sdkconfig.defaults
+  # ⚠️  Must be a tag that EXISTS on hub.docker.com/r/espressif/idf/tags
+  # espressif/idf:v6.2.0 does NOT exist — use release-vX.Y format.
+  IDF_VERSION: release-v5.4
   IDF_TARGET:  esp32c6
-  # IDF Component Manager stores downloaded components here
-  IDF_COMPONENT_CACHE_DIR: ~/.cache/idf-component-manager
+  # Component manager cache dir — mounted into the container via -DIDF_COMPONENT_MANAGER_CACHE_DIR
+  IDF_COMPONENT_CACHE_DIR: /tmp/idf_component_cache
 
 jobs:
   build:
@@ -45,51 +52,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive   # in case alarm_timer is added as submodule later
+          submodules: recursive
 
-      # ── 2. Cache: ESP-IDF toolchain (~1.4 GB, takes ~15 min cold) ──────────
-      - name: Cache ESP-IDF toolchain
-        id: cache-idf
-        uses: actions/cache@v4
-        with:
-          path: ~/.espressif
-          key: espressif-${{ env.IDF_VERSION }}-${{ runner.os }}
-          restore-keys: |
-            espressif-${{ env.IDF_VERSION }}-
-
-      # ── 3. Cache: IDF Component Manager downloads ──────────────────────────
+      # ── 2. Cache: IDF Component Manager ────────────────────────────────────
+      # NOTE: ~/.espressif lives INSIDE the Docker container — caching it
+      # on the host runner has zero effect. Only the component manager
+      # download cache (mapped via IDF_COMPONENT_MANAGER_CACHE_DIR) is
+      # useful to persist between runs.
       - name: Cache IDF component manager
         uses: actions/cache@v4
         with:
           path: ${{ env.IDF_COMPONENT_CACHE_DIR }}
-          key: idf-components-${{ hashFiles('main/idf_component.yml') }}-${{ env.IDF_VERSION }}
+          key: idf-components-${{ env.IDF_VERSION }}-${{ hashFiles('main/idf_component.yml') }}
           restore-keys: |
+            idf-components-${{ env.IDF_VERSION }}-
             idf-components-
 
-      # ── 4. Install ESP-IDF ─────────────────────────────────────────────────
-      # Uses the official Espressif action which handles install.sh + exports
-      - name: Install ESP-IDF ${{ env.IDF_VERSION }}
-        uses: espressif/esp-idf-ci-action@v1
-        id: idf-install
-        with:
-          esp_idf_version: ${{ env.IDF_VERSION }}
-          target: ${{ env.IDF_TARGET }}
-          # Pass the build command directly to the action
-          command: |
-            idf.py set-target ${{ env.IDF_TARGET }}
-            idf.py build
-
-      # ── 5. Build size report ───────────────────────────────────────────────
-      # Run only if build succeeded; produces a human-readable memory map
-      - name: Generate size report
-        if: success()
+      # ── 3. Build + size report (single Docker invocation) ──────────────────
+      - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: ${{ env.IDF_VERSION }}
           target: ${{ env.IDF_TARGET }}
-          command: idf.py size >> build/size_report.txt
+          path: '.'
+          command: >
+            idf.py
+            -DIDF_COMPONENT_MANAGER_CACHE_DIR=${{ env.IDF_COMPONENT_CACHE_DIR }}
+            set-target ${{ env.IDF_TARGET }}
+            build
+            size
 
-      # ── 6. Upload artefacts ────────────────────────────────────────────────
+      # ── 4. Upload artefacts (success) ─────────────────────────────────────
       - name: Upload firmware binaries
         if: success()
         uses: actions/upload-artifact@v4
@@ -99,10 +92,10 @@ jobs:
             build/*.bin
             build/*.elf
             build/*.map
-            build/size_report.txt
+            build/size_summary.json
           retention-days: 14
 
-      # ── 7. Upload build log on failure ────────────────────────────────────
+      # ── 5. Upload build dir on failure (post-mortem) ─────────────────────
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
