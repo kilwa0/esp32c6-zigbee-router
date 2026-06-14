@@ -10,6 +10,8 @@
 #include "driver/gpio.h"
 #include "esp_zigbee.h"
 #include "ezbee/secur.h"
+#include "ezbee/af.h"
+#include "ezbee/zcl/cluster/basic_desc.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -21,7 +23,7 @@ static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
-/* Colores del LED de estado (R, G, B) — valores 0-255 */
+/* Colores del LED de estado (R, G, B) -- valores 0-255 */
 #define LED_RED     16,  0,  0
 #define LED_GREEN    0, 16,  0
 #define LED_BLUE     0,  0, 16
@@ -44,7 +46,6 @@ static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 static void configure_led(void)
 {
     ESP_LOGI(TAG, "Configurando LED strip (RMT, GPIO %d)", LED_ESTADO_GPIO);
-    /* ESP32-C6 tiene RMT hardware — se usa directamente sin condicional Kconfig */
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_ESTADO_GPIO,
         .max_leds = 1,
@@ -55,6 +56,91 @@ static void configure_led(void)
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
     led_strip_clear(led_strip);
+}
+
+/* Registra un endpoint minimo con device ID 0x0008 (range_extender, HA profile).
+   Solo incluye el cluster Basic con manufacturer_name y model_identifier para
+   que el coordinador pueda identificar el nodo. Sin clusters de aplicacion. */
+static esp_err_t register_router_endpoint(void)
+{
+    esp_err_t ret = ESP_OK;
+
+    ezb_af_device_desc_t dev_desc = ezb_af_create_device_desc();
+    if (!dev_desc) {
+        ESP_LOGE(TAG, "No se pudo crear device_desc");
+        return ESP_ERR_NO_MEM;
+    }
+
+    ezb_af_ep_config_t ep_config = {
+        .ep_id              = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
+        .app_profile_id     = EZB_AF_HA_PROFILE_ID,
+        .app_device_id      = 0x0008, /* range_extender */
+        .app_device_version = 0,
+    };
+    ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
+    if (!ep_desc) {
+        ESP_LOGE(TAG, "No se pudo crear ep_desc");
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_dev;
+    }
+
+    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_cluster_desc_create(EZB_ZCL_CLUSTER_SERVER);
+    if (!basic_desc) {
+        ESP_LOGE(TAG, "No se pudo crear Basic cluster desc");
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_ep;
+    }
+
+    ret = ezb_zcl_basic_cluster_desc_add_attr(
+            basic_desc,
+            EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
+            (const void *)ESP_MANUFACTURER_NAME);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir ManufacturerName: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    ret = ezb_zcl_basic_cluster_desc_add_attr(
+            basic_desc,
+            EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
+            (const void *)ESP_MODEL_IDENTIFIER);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir ModelIdentifier: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+    /* basic_desc pertenece ahora a ep_desc */
+
+    ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
+        /* Ownership de ep_desc respecto a dev_desc es indeterminado tras fallo:
+           no llamar free_endpoint_desc por separado para evitar double-free. */
+        goto cleanup_dev;
+    }
+    /* ep_desc pertenece ahora a dev_desc */
+
+    ret = ezb_af_device_desc_register(dev_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo registrar device desc: %s", esp_err_to_name(ret));
+        goto cleanup_dev;
+    }
+    /* dev_desc registrado: el stack es su dueno a partir de aqui */
+
+    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x (range_extender)",
+             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID, 0x0008);
+    return ESP_OK;
+
+cleanup_ep:
+    ezb_af_free_endpoint_desc(ep_desc);
+cleanup_dev:
+    ezb_af_free_device_desc(dev_desc);
+    return ret;
 }
 
 static const char *bdb_status_to_str(ezb_bdb_comm_status_t status)
@@ -91,7 +177,7 @@ static void send_first_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
     /* alarm_timer callbacks se ejecutan en el timer task de FreeRTOS,
-       fuera de la Zigbee main task: hay que adquirir el lock del stack. */
+       fuera de la Zigbee main task: lock obligatorio al acceder al stack. */
     esp_zigbee_lock_acquire(portMAX_DELAY);
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
@@ -102,7 +188,6 @@ static void send_first_announce(alarm_timer_arg_t arg)
 static void send_second_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
-    /* Ídem: lock obligatorio al llamar al stack desde el timer task. */
     esp_zigbee_lock_acquire(portMAX_DELAY);
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
@@ -223,10 +308,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 static void esp_zigbee_stack_main_task(void *pvParameters)
 {
     esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
-    static const uint8_t standard_tc_link_key[] = {
-        0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c,
-        0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39,
-    };
+    static const uint8_t standard_tc_link_key[] = ESP_ZIGBEE_TC_LINK_KEY;
 
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
 
@@ -242,6 +324,8 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
+
+    ESP_ERROR_CHECK(register_router_endpoint());
 
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();

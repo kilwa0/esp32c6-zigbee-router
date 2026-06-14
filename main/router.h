@@ -9,12 +9,19 @@
 #define ESP_ZIGBEE_PRIMARY_CHANNEL_MASK   (0x07FFF800U)
 #define ESP_ZIGBEE_SECONDARY_CHANNEL_MASK (0x07FFF800U)
 
-#define ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID (1)
+#define ESP_ZIGBEE_RANGE_EXTENDER_EP_ID   (1)
+
+/* ZigBee Alliance standard Trust Center link key ("ZigBeeAlliance09").
+ * Defined in the ZigBee spec as the well-known default pre-configured
+ * link key. This is a PUBLIC value -- not a secret credential. */
+#define ESP_ZIGBEE_TC_LINK_KEY            \
+    { 0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c, \
+      0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39 }
 
 #define ESP_ZIGBEE_STORAGE_PARTITION_NAME "zb_storage"
 
-#define ESP_MANUFACTURER_NAME "\x09""ESPRESSIF"
-#define ESP_MODEL_IDENTIFIER "\x08""ESP32-C6"
+#define ESP_MANUFACTURER_NAME "\x09" "ESPRESSIF"
+#define ESP_MODEL_IDENTIFIER  "\x08" "ESP32-C6"
 
 #define ESP_ZIGBEE_ROUTER_CONFIG()                   \
     {                                                \
@@ -34,7 +41,7 @@
         },                                                           \
     }
 #else
-#warning "The example is not for IEEE 802.15.4-disabled SoC usage, please refer to esp_zigbee_gateway for RCP configuration"
+#warning "This firmware requires IEEE 802.15.4 support. For RCP-based setups refer to esp_zigbee_gateway."
 #endif
 
 #define ESP_ZIGBEE_DEFAULT_CONFIG()                         \
