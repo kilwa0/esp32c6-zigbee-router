@@ -64,6 +64,8 @@ static void configure_led(void)
 
 static esp_err_t register_router_endpoint(void)
 {
+    esp_err_t ret = ESP_OK;
+
     ezb_af_device_desc_t dev_desc = ezb_af_create_device_desc();
     if (!dev_desc) {
         ESP_LOGE(TAG, "No se pudo crear device_desc");
@@ -76,29 +78,35 @@ static esp_err_t register_router_endpoint(void)
     ezb_af_ep_desc_t ep_desc = ezb_zha_create_on_off_switch(ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID, &switch_cfg);
     if (!ep_desc) {
         ESP_LOGE(TAG, "No se pudo crear ep_desc ZHA");
-        return ESP_ERR_NO_MEM;
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_dev;
     }
 
     ezb_zcl_cluster_desc_t basic_desc = ezb_af_endpoint_get_cluster_desc(
         ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
     if (!basic_desc) {
         ESP_LOGE(TAG, "No se pudo obtener Basic cluster desc");
-        return ESP_ERR_NOT_FOUND;
+        ret = ESP_ERR_NOT_FOUND;
+        goto cleanup_ep;
     }
 
-    ESP_RETURN_ON_ERROR(
-        ezb_zcl_basic_cluster_desc_add_attr(
+    ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
             EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
-            (const void *)ESP_MANUFACTURER_NAME),
-        TAG, "No se pudo anadir ManufacturerName");
+            (const void *)ESP_MANUFACTURER_NAME);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir ManufacturerName: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
 
-    ESP_RETURN_ON_ERROR(
-        ezb_zcl_basic_cluster_desc_add_attr(
+    ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
             EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
-            (const void *)ESP_MODEL_IDENTIFIER),
-        TAG, "No se pudo anadir ModelIdentifier");
+            (const void *)ESP_MODEL_IDENTIFIER);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir ModelIdentifier: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
 
     ESP_LOGI(TAG, "Endpoint: ep=%u profile=0x%04x device=0x%04x",
              ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID, EZB_AF_HA_PROFILE_ID,
@@ -108,15 +116,27 @@ static esp_err_t register_router_endpoint(void)
              &ESP_MODEL_IDENTIFIER[1],
              switch_cfg.basic_cfg.power_source);
 
-    ESP_RETURN_ON_ERROR(
-        ezb_af_device_add_endpoint_desc(dev_desc, ep_desc),
-        TAG, "No se pudo anadir endpoint desc");
+    ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+    /* ep_desc pertenece ahora a dev_desc; no liberar por separado */
 
-    ESP_RETURN_ON_ERROR(
-        ezb_af_device_desc_register(dev_desc),
-        TAG, "No se pudo registrar endpoint");
-
+    ret = ezb_af_device_desc_register(dev_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo registrar endpoint: %s", esp_err_to_name(ret));
+        /* dev_desc ya tiene ep_desc adjunto — free del device libera ambos */
+        goto cleanup_dev;
+    }
+    /* dev_desc registrado en el stack; el stack es su dueño desde aquí */
     return ESP_OK;
+
+cleanup_ep:
+    ezb_af_free_endpoint_desc(ep_desc);
+cleanup_dev:
+    ezb_af_free_device_desc(dev_desc);
+    return ret;
 }
 
 static const char *bdb_status_to_str(ezb_bdb_comm_status_t status)
@@ -152,16 +172,23 @@ static void esp_zigbee_alarm_bdb_commissioning(alarm_timer_arg_t arg)
 static void send_first_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
+    /* alarm_timer callbacks se ejecutan en el timer task de FreeRTOS,
+       fuera de la Zigbee main task: hay que adquirir el lock del stack. */
+    esp_zigbee_lock_acquire(portMAX_DELAY);
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
+    esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Device Announce enviado (first join)");
 }
 
 static void send_second_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
+    /* Ídem: lock obligatorio al llamar al stack desde el timer task. */
+    esp_zigbee_lock_acquire(portMAX_DELAY);
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
+    esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Device Announce reenviado (second announce)");
 }
 
