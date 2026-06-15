@@ -51,8 +51,8 @@ El proyecto utiliza `sdkconfig.defaults` y `sdkconfig.defaults.esp32c6` con valo
 
 | Parámetro Kconfig | Descripción | Valor por defecto |
 |-------------------|-------------|-------------------|
-| `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK` | Máscara canales primarios (11–26) | `0x07FFF800` |
-| `ESP_ZIGBEE_SECONDARY_CHANNEL_MASK` | Máscara canales secundarios | `0x07FFF800` |
+| `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK` | Canales primarios: 15, 20, 25 (mínimo solapamiento con WiFi 2.4 GHz en EU) | `0x02108000` |
+| `ESP_ZIGBEE_SECONDARY_CHANNEL_MASK` | Canales secundarios: scan completo 11–26 (fallback) | `0x07FFF800` |
 
 Para personalizar el nombre de fabricante y modelo del dispositivo, editar `main/router.h`:
 
@@ -63,6 +63,16 @@ Para personalizar el nombre de fabricante y modelo del dispositivo, editar `main
 
 > **Nota**: El prefijo `\xNN` es la longitud de la cadena en formato ZCL (Pascal string). Actualizar el byte de longitud si se cambia el texto.
 
+### Constantes de temporización y stack
+
+Definidas en `main/router.h`, sin necesidad de recompilar si se ajustan vía `Kconfig`:
+
+| Constante | Valor por defecto | Descripción |
+|-----------|-------------------|-------------|
+| `ROUTER_BDB_INIT_RETRY_MS` | `2000` ms | Tiempo entre reintentos de BDB initialization |
+| `ROUTER_STEERING_RETRY_MS` | `5000` ms | Tiempo entre reintentos de network steering |
+| `ZIGBEE_MAIN_TASK_STACK_SIZE` | `8192` bytes | Stack de la tarea principal Zigbee |
+
 ---
 
 ## Arquitectura del firmware
@@ -72,7 +82,7 @@ Para personalizar el nombre de fabricante y modelo del dispositivo, editar `main
 | Fichero | Descripción |
 |---------|-------------|
 | `main/router.c` | Lógica principal: inicialización, máquina de estados Zigbee, LED de estado |
-| `main/router.h` | Constantes de configuración y macros de inicialización de la stack |
+| `main/router.h` | Constantes de configuración, máscaras de canal y macros de inicialización de la stack |
 | `main/Kconfig.projbuild` | Opciones de configuración exportadas al sistema de build |
 | `main/idf_component.yml` | Dependencias de componentes IDF |
 | `sdkconfig.defaults` | Configuración mínima de ESP-IDF (flash 16 MB, Zigbee habilitado, log DEBUG) |
@@ -85,11 +95,13 @@ app_main()
   ├── configure_led()           — inicializa LED RGB en GPIO 8 (RMT)
   ├── nvs_flash_init()          — NVS general
   ├── nvs_flash_init_partition("zb_storage")  — NVS Zigbee
-  └── xTaskCreate(esp_zigbee_stack_main_task, stack=8192)
+  └── xTaskCreate(esp_zigbee_stack_main_task, stack=ZIGBEE_MAIN_TASK_STACK_SIZE)
         ├── esp_zigbee_init()
+        ├── ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK)
+        ├── ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK)
         ├── ezb_secur_set_global_link_key()   — TC Link Key estándar HA
         ├── ezb_secur_set_tclk_exchange_required(true)
-        ├── register_router_endpoint()         — ZHA On/Off Switch, EP 1
+        ├── register_router_endpoint()         — Range Extender, EP 1, device 0x0008
         └── esp_zigbee_launch_mainloop()       — loop principal Zigbee
 ```
 
@@ -99,13 +111,18 @@ El router gestiona su ciclo de vida de red mediante el manejador `esp_zigbee_app
 
 | Señal | Acción | LED |
 |-------|--------|-----|
-| `ZDO_SIGNAL_SKIP_STARTUP` | Lanza `BDB_MODE_INITIALIZATION` | Rojo |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK | Si factory-new → steering; si rejoin → Device Announce | Azul → Verde |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` fallo | Reintento en 2 s vía alarm_timer | Rojo |
-| `BDB_SIGNAL_STEERING` OK | Unido a red, envía Device Announce (×2: 3 s y 8 s) | Verde |
-| `BDB_SIGNAL_STEERING` fallo | Reintento en 5 s, alterna INITIALIZATION/STEERING | Rojo |
-| `NWK_SIGNAL_PERMIT_JOIN_STATUS` | Indica apertura/cierre de permit join en la PAN | Azul/Verde |
-| `ZDO_SIGNAL_LEAVE` | Dispositivo expulsado de la red | Rojo |
+| `ZDO_SIGNAL_SKIP_STARTUP` | Lanza `BDB_MODE_INITIALIZATION` | 🔴 Rojo |
+| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + factory-new | Lanza `BDB_MODE_NETWORK_STEERING` | 🟡 Ámbar |
+| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + rejoin | Device Announce inmediato | 🟢 Verde |
+| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` fallo | Reintento en `ROUTER_BDB_INIT_RETRY_MS` | 🔴 Rojo |
+| `BDB_SIGNAL_STEERING` OK | Unido a red, envía Device Announce (×2: 3 s y 8 s) | 🟢 Verde |
+| `BDB_SIGNAL_STEERING` `NO_NETWORK` | Reintento en `ROUTER_STEERING_RETRY_MS`, alterna INIT/STEERING | 🟡 Ámbar |
+| `BDB_SIGNAL_STEERING` `NOT_PERMITTED` / `TARGET_FAILURE` | Reintento programado | 🟡 Ámbar |
+| `BDB_SIGNAL_STEERING` `TCLK_EX_FAILURE` | Log de advertencia, reintento | — |
+| `NWK_SIGNAL_PERMIT_JOIN_STATUS` activo | Permit join abierto en la PAN | 🔵 Azul |
+| `NWK_SIGNAL_PERMIT_JOIN_STATUS` cerrado | Permit join cerrado | 🟢 Verde |
+| `ZDO_SIGNAL_LEAVE` | Dispositivo expulsado de la red | 🔴 Rojo |
+| Señal desconocida | Log informativo | ⚪ Blanco |
 
 ### Lógica de reintentos de steering
 
@@ -131,11 +148,18 @@ La variable `retry_with_initialization` controla la alternancia. Un retry sólo 
 
 | Color | R | G | B | Estado |
 |-------|---|---|---|--------|
-| 🔴 Rojo | 16 | 0 | 0 | Sin red / error / reintentando |
+| 🔴 Rojo | 16 | 0 | 0 | Sin red / error crítico / dispositivo expulsado de la red |
+| 🟡 Ámbar | 30 | 7 | 0 | Buscando red / join rechazado / dispositivo vivo sin red |
 | 🟢 Verde | 0 | 16 | 0 | Conectado a la red Zigbee |
-| 🔵 Azul brillante | 0 | 0 | 255 | BDB init OK, pendiente de steering |
-| 🔵 Azul tenue | 0 | 0 | 16 | Permit join activo en la PAN |
-| ⚪ Blanco | 16 | 16 | 16 | Señal Zigbee desconocida |
+| 🔵 Azul | 0 | 0 | 16 | Permit join activo en la PAN |
+| ⚪ Blanco | 16 | 16 | 16 | Señal Zigbee desconocida (diagnóstico) |
+
+**Semántica de colores:**
+- 🔴 **Rojo** — error crítico o ausencia total de red (dispositivo no operativo)
+- 🟡 **Ámbar** — advertencia / en proceso: el dispositivo está vivo y reintentando activamente
+- 🟢 **Verde** — estado nominal: el router está integrado en la red y enrutando tráfico
+- 🔵 **Azul** — informativo: la ventana de emparejamiento de la PAN está abierta
+- ⚪ **Blanco** — diagnóstico: señal Zigbee no reconocida por el firmware
 
 ---
 
@@ -143,11 +167,13 @@ La variable `retry_with_initialization` controla la alternancia. Un retry sólo 
 
 | Parámetro | Valor |
 |-----------|-------|
-| Endpoint ID | 1 (`ESP_ZIGBEE_HA_ON_OFF_SWITCH_EP_ID`) |
-| Profile | HA (`0x0104`) |
-| Device ID | On/Off Output (`EZB_ZHA_ON_OFF_OUTPUT_DEVICE_ID`) |
+| Endpoint ID | 1 (`ESP_ZIGBEE_RANGE_EXTENDER_EP_ID`) |
+| Profile | HA (`EZB_AF_HA_PROFILE_ID` / `0x0104`) |
+| Device ID | Range Extender (`0x0008`) |
 | Power Source (Basic cluster) | `SINGLE_PHASE_MAINS` (`0x01`) |
-| Clusters servidor | Basic, Identify, On/Off |
+| Clusters servidor | Basic (con `ManufacturerName` y `ModelIdentifier`) |
+
+> El endpoint registra únicamente el cluster Basic con los atributos de identificación obligatorios. No incluye clusters de aplicación (On/Off, etc.) ya que el router actúa exclusivamente como nodo de infraestructura.
 
 ---
 
@@ -161,11 +187,13 @@ Configurada en `partitions.csv` con partición dedicada `zb_storage` para el alm
 
 | Síntoma | Causa probable | Acción |
 |---------|---------------|--------|
-| LED rojo parpadeante constante | Coordinador no en permit join | Abrir permit join en el coordinador |
+| LED 🟡 ámbar constante | Coordinador no en permit join o fuera de rango | Abrir permit join en el coordinador y verificar distancia |
+| LED 🟡 ámbar alternando con 🔴 rojo | Ciclo STEERING → INITIALIZATION en curso | Normal si el coordinador no está disponible; esperar o abrir permit join |
 | `TCLK_EX_FAILURE` en logs | Política de seguridad del coordinador incompatible | Verificar que el coordinador acepta la TC Link Key estándar |
 | `NOT_PERMITTED` en logs | Permit join cerrado en el coordinador | Abrir permit join (60–254 s) |
-| WDT reset en steering | Stack insuficiente en la tarea Zigbee | Verificar que `xTaskCreate` usa ≥ 8192 bytes |
+| WDT reset en steering | Stack insuficiente en la tarea Zigbee | Verificar que `ZIGBEE_MAIN_TASK_STACK_SIZE` ≥ 8192 bytes |
 | Dispositivo no visible en la interfaz del coordinador | `power_source` incorrecto en Basic cluster | Verificar que `power_source = SINGLE_PHASE_MAINS` |
+| Router no escanea todos los canales | Máscara primaria demasiado restrictiva | Verificar `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK`; el fallback secundario escaneará 11–26 |
 
 ---
 
