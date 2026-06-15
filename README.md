@@ -1,6 +1,6 @@
 # esp32c6-zigbee-router
 
-> 🇪🇸 Versión en español: [README.es.md](README.es.md)
+> 🇪🇸 Versión en español: [README.es.md](Docs/LNG/ES/README.es.md)
 
 ESP-IDF firmware for the ESP32-C6 implementing a **pure Zigbee router** with an RGB status LED. It acts as an intermediate node in a Zigbee HA (Home Automation) network, extending the network range and re-routing traffic between end devices and the coordinator.
 
