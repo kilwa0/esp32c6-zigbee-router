@@ -62,6 +62,13 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  * 255 is the ZigBee spec maximum.  Use shorter values in production. */
 #define ROUTER_JOIN_OPEN_DURATION_S   255U
 
+/* RF transmit power in dBm.
+ * 20 dBm is the hardware maximum of the ESP32-C6 IEEE 802.15.4 radio
+ * and stays within the CE/ETSI EN 300 328 limit of 100 mW EIRP in the
+ * 2.4 GHz ISM band.  Reduce for bench testing or dense deployments where
+ * range extension is not needed. */
+#define ROUTER_TX_POWER_DBM           20
+
 /* Zigbee main task stack size.
  * Espressif documents 8 KB as the minimum; we add 2 KB of headroom for
  * esp_log calls (which push ~512-1024 bytes at DEBUG level) and for the

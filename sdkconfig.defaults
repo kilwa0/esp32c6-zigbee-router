@@ -47,3 +47,9 @@ CONFIG_LOG_MAXIMUM_LEVEL=4
 CONFIG_BLINK_LED_STRIP=y
 CONFIG_BLINK_LED_STRIP_BACKEND_RMT=y
 CONFIG_BLINK_GPIO=8
+
+# RF: IEEE 802.15.4 TX power
+# 20 dBm = hardware maximum of the ESP32-C6 radio.
+# Within CE/ETSI EN 300 328 limit (100 mW EIRP, 2.4 GHz ISM band).
+# Runtime override via esp_ieee802154_set_txpower() in router.c.
+CONFIG_IEEE802154_TX_POWER=20

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "esp_check.h"
 #include "esp_err.h"
+#include "esp_ieee802154.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "alarm_timer.h"
@@ -362,6 +363,20 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
 
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
+
+    /* RF: set TX power to legal maximum (20 dBm / 100 mW EIRP).
+     * This is within CE/ETSI EN 300 328 and FCC Part 15 limits for
+     * the 2.4 GHz ISM band.  Must be called after esp_zigbee_init()
+     * and before esp_zigbee_start() so the radio is initialised but
+     * not yet transmitting. */
+    int8_t tx_power_dbm = ROUTER_TX_POWER_DBM;
+    esp_err_t pw_err = esp_ieee802154_set_txpower(tx_power_dbm);
+    if (pw_err != ESP_OK) {
+        ESP_LOGW(TAG, "No se pudo fijar TX power a %d dBm: %s",
+                 tx_power_dbm, esp_err_to_name(pw_err));
+    } else {
+        ESP_LOGI(TAG, "TX power fijado a %d dBm (maximo legal CE/ETSI)", tx_power_dbm);
+    }
 
     /* SECURITY: use static s_tc_link_key (private to this TU, not the
      * header macro) to restrict linkage of the key material. */
