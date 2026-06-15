@@ -3,9 +3,6 @@ name: Build ESP32-C6 Zigbee Router
 on:
   pull_request:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
@@ -18,18 +15,46 @@ env:
   IDF_COMPONENT_CACHE_DIR: /tmp/idf_component_cache
 
 jobs:
+  # Detects whether the PR contains any file that requires a real build.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-24.04
+    outputs:
+      firmware: ${{ steps.filter.outputs.firmware }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            firmware:
+              - '!(**/*.md)'
+              - '!LICENSE'
+
   build:
     name: idf.py build (esp32c6)
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
+      # Fast-pass: docs-only PR — skip the build but still report success so
+      # the required status check is satisfied.
+      - name: Skip build (docs-only PR)
+        if: needs.changes.outputs.firmware == 'false'
+        run: |
+          echo "No firmware files changed. Skipping build."
+          exit 0
+
       - name: Checkout repository
+        if: needs.changes.outputs.firmware == 'true'
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Cache IDF component manager
+        if: needs.changes.outputs.firmware == 'true'
         uses: actions/cache@v4
         with:
           path: ${{ env.IDF_COMPONENT_CACHE_DIR }}
@@ -42,6 +67,7 @@ jobs:
       # 'set-target' regenera sdkconfig desde cero ignorando sdkconfig.defaults.
       # El target lo lee idf.py directamente de CONFIG_IDF_TARGET en sdkconfig.defaults.
       - name: Build firmware
+        if: needs.changes.outputs.firmware == 'true'
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: ${{ env.IDF_VERSION }}
@@ -54,7 +80,7 @@ jobs:
             size
 
       - name: Upload firmware binaries
-        if: success()
+        if: needs.changes.outputs.firmware == 'true' && success()
         uses: actions/upload-artifact@v4
         with:
           name: firmware-esp32c6-${{ github.sha }}
@@ -66,7 +92,7 @@ jobs:
           retention-days: 14
 
       - name: Upload build log on failure
-        if: failure()
+        if: needs.changes.outputs.firmware == 'true' && failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-log-failure-${{ github.run_id }}
