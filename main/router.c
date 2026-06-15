@@ -23,13 +23,22 @@ static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
-/* Colores del LED de estado (R, G, B) -- valores 0-255 */
-#define LED_RED     16,  0,  0
-#define LED_GREEN    0, 16,  0
-#define LED_BLUE     0,  0, 16
-#define LED_ORANGE   30,  7, 0
-#define LED_WHITE   16, 16, 16
-#define LED_BLACK    0,  0,  0
+/* Colores del LED de estado (R, G, B) -- valores 0-255.
+ * Semantica:
+ *   RED   -> error critico / dispositivo fuera de red
+ *   AMBER -> advertencia / buscando red / join rechazado (vivo, sin red)
+ *   GREEN -> unido a la red y operativo
+ *   BLUE  -> ventana permit-join abierta
+ *   WHITE -> senal Zigbee desconocida (diagnostico)
+ *
+ * AMBER es preferible a ORANGE como nombre porque es el color
+ * universalmente asociado a "atencion / en proceso" en semaforos y
+ * electronica de estado (vs ORANGE que es solo un tono de color). */
+#define LED_RED    16,  0,  0
+#define LED_GREEN   0, 16,  0
+#define LED_BLUE    0,  0, 16
+#define LED_AMBER  30,  7,  0
+#define LED_WHITE  16, 16, 16
 
 static led_strip_handle_t led_strip;
 
@@ -221,7 +230,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                  bdb_status_to_str(status), status);
         if (status == EZB_BDB_STATUS_SUCCESS) {
             ESP_LOGI(TAG, "BDB init OK. Factory new: %s", ezb_bdb_is_factory_new() ? "si" : "no");
-            set_led(LED_ORANGE);
+            set_led(LED_AMBER);
             if (ezb_bdb_is_factory_new()) {
                 ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
             } else {
@@ -259,13 +268,13 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
             if (status == EZB_BDB_STATUS_NO_NETWORK) {
                 ESP_LOGW(TAG, "No se encontro red Zigbee: verificar coordinador en modo emparejamiento y dentro de rango");
                 ESP_LOGI(TAG, "Siguiente reintento: %s", retry_with_initialization ? "INITIALIZATION" : "NETWORK_STEERING");
-                set_led(LED_BLACK);
+                set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_NOT_PERMITTED) {
                 ESP_LOGW(TAG, "Join no permitido por el coordinador (permit join cerrado)");
-                set_led(LED_ORANGE);
+                set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_TARGET_FAILURE) {
                 ESP_LOGW(TAG, "Fallo de join: el coordinador rechazo la solicitud de join");
-                set_led(LED_ORANGE);
+                set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_TCLK_EX_FAILURE) {
                 ESP_LOGW(TAG, "Fallo intercambio de Trust Center Link Key: revisar politica de seguridad del coordinador");
             }
@@ -273,13 +282,12 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                 alarm_timer_arg_t next_mode = EZB_BDB_MODE_NETWORK_STEERING;
                 if (status == EZB_BDB_STATUS_NO_NETWORK && retry_with_initialization) {
                     next_mode = EZB_BDB_MODE_INITIALIZATION;
-                    set_led(LED_RED);
                 }
                 steering_retry_pending = true;
                 alarm_timer_schedule(esp_zigbee_alarm_bdb_commissioning,
                                      next_mode, ROUTER_STEERING_RETRY_MS);
                 if (status == EZB_BDB_STATUS_NO_NETWORK) {
-                    set_led(LED_BLACK);
+                    set_led(LED_AMBER);
                     retry_with_initialization = !retry_with_initialization;
                 }
             }
