@@ -23,19 +23,31 @@ static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
-/* Colores del LED de estado (R, G, B) -- valores 0-255 */
-#define LED_RED     16,  0,  0
-#define LED_GREEN    0, 16,  0
-#define LED_BLUE     0,  0, 16
-#define LED_BLUE_BDB 0,  0, 255
-#define LED_WHITE   16, 16, 16
+/* Colores del LED de estado (R, G, B) -- valores 0-255.
+ * Semantica:
+ *   RED   -> error critico / dispositivo fuera de red
+ *   AMBER -> advertencia / buscando red / join rechazado (vivo, sin red)
+ *   GREEN -> unido a la red y operativo
+ *   BLUE  -> ventana permit-join abierta
+ *   WHITE -> senal Zigbee desconocida (diagnostico)
+ *
+ * AMBER es preferible a ORANGE como nombre porque es el color
+ * universalmente asociado a "atencion / en proceso" en semaforos y
+ * electronica de estado (vs ORANGE que es solo un tono de color). */
+#define LED_RED    16,  0,  0
+#define LED_GREEN   0, 16,  0
+#define LED_BLUE    0,  0, 16
+#define LED_AMBER  30,  7,  0
+#define LED_WHITE  16, 16, 16
 
 static led_strip_handle_t led_strip;
 
 /* Accedidas desde alarm_timer callbacks (timer task) y signal handler
    (Zigbee main task): _Atomic garantiza visibilidad sin data race. */
 static _Atomic bool steering_retry_pending;
-static _Atomic bool retry_with_initialization;
+/* Inicializacion explicita aunque el estandar C garantice cero para
+   variables estaticas: comunica la intencion al lector. */
+static _Atomic bool retry_with_initialization = false;
 
 static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -181,7 +193,9 @@ static void esp_zigbee_alarm_bdb_commissioning(alarm_timer_arg_t arg)
     steering_retry_pending = false;
 }
 
-static void send_first_announce(alarm_timer_arg_t arg)
+/* Unica funcion de Device Announce: reemplaza send_first_announce y
+   send_second_announce que tenian cuerpos identicos (DRY). */
+static void send_device_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
     /* alarm_timer callbacks se ejecutan en el timer task de FreeRTOS,
@@ -190,23 +204,16 @@ static void send_first_announce(alarm_timer_arg_t arg)
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
     esp_zigbee_lock_release();
-    ESP_LOGI(TAG, "Device Announce enviado (first join)");
-}
-
-static void send_second_announce(alarm_timer_arg_t arg)
-{
-    (void)arg;
-    esp_zigbee_lock_acquire(portMAX_DELAY);
-    ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
-    ezb_zdo_device_annce_req(&annce);
-    esp_zigbee_lock_release();
-    ESP_LOGI(TAG, "Device Announce reenviado (second announce)");
+    ESP_LOGI(TAG, "Device Announce enviado");
 }
 
 static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 {
     ezb_app_signal_type_t signal_type = ezb_app_signal_get_type(app_signal);
-    set_led(LED_RED);
+    /* NOTA: NO poner set_led() aqui. Hacerlo causaba un flash rojo en
+       todas las senales, incluyendo EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS y
+       el caso default, enmascarando el estado real de la red. Cada case
+       gestiona su propio color de LED. */
 
     switch (signal_type) {
     case EZB_ZDO_SIGNAL_SKIP_STARTUP:
@@ -223,7 +230,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                  bdb_status_to_str(status), status);
         if (status == EZB_BDB_STATUS_SUCCESS) {
             ESP_LOGI(TAG, "BDB init OK. Factory new: %s", ezb_bdb_is_factory_new() ? "si" : "no");
-            set_led(LED_BLUE_BDB);
+            set_led(LED_AMBER);
             if (ezb_bdb_is_factory_new()) {
                 ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
             } else {
@@ -234,8 +241,10 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                 ESP_LOGI(TAG, "Device Announce enviado (rejoin)");
             }
         } else {
-            ESP_LOGW(TAG, "BDB init fallo (%s / 0x%02x). Reintento en 2s...", bdb_status_to_str(status), status);
-            alarm_timer_schedule(esp_zigbee_alarm_bdb_commissioning, EZB_BDB_MODE_INITIALIZATION, 2000);
+            ESP_LOGW(TAG, "BDB init fallo (%s / 0x%02x). Reintento en %ums...",
+                     bdb_status_to_str(status), status, ROUTER_BDB_INIT_RETRY_MS);
+            alarm_timer_schedule(esp_zigbee_alarm_bdb_commissioning,
+                                 EZB_BDB_MODE_INITIALIZATION, ROUTER_BDB_INIT_RETRY_MS);
         }
     } break;
 
@@ -248,23 +257,24 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
             ESP_LOGI(TAG, "=== JOIN OK: PAN 0x%04hx, Canal %d, Addr 0x%04hx ===",
                      ezb_nwk_get_panid(), ezb_nwk_get_current_channel(), ezb_nwk_get_short_address());
             set_led(LED_GREEN);
-            alarm_timer_schedule(send_first_announce,  0, 3000);
-            alarm_timer_schedule(send_second_announce, 0, 8000);
+            alarm_timer_schedule(send_device_announce, 0, 3000);
+            alarm_timer_schedule(send_device_announce, 0, 8000);
         } else {
             if (steering_retry_pending) {
                 break;
             }
-            ESP_LOGW(TAG, "Steering fallo (%s / 0x%02x). Reintento en 5s...", bdb_status_to_str(status), status);
+            ESP_LOGW(TAG, "Steering fallo (%s / 0x%02x). Reintento en %ums...",
+                     bdb_status_to_str(status), status, ROUTER_STEERING_RETRY_MS);
             if (status == EZB_BDB_STATUS_NO_NETWORK) {
                 ESP_LOGW(TAG, "No se encontro red Zigbee: verificar coordinador en modo emparejamiento y dentro de rango");
                 ESP_LOGI(TAG, "Siguiente reintento: %s", retry_with_initialization ? "INITIALIZATION" : "NETWORK_STEERING");
-                set_led(LED_RED);
+                set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_NOT_PERMITTED) {
                 ESP_LOGW(TAG, "Join no permitido por el coordinador (permit join cerrado)");
-                set_led(LED_RED);
+                set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_TARGET_FAILURE) {
                 ESP_LOGW(TAG, "Fallo de join: el coordinador rechazo la solicitud de join");
-                set_led(LED_RED);
+                set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_TCLK_EX_FAILURE) {
                 ESP_LOGW(TAG, "Fallo intercambio de Trust Center Link Key: revisar politica de seguridad del coordinador");
             }
@@ -272,12 +282,12 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                 alarm_timer_arg_t next_mode = EZB_BDB_MODE_NETWORK_STEERING;
                 if (status == EZB_BDB_STATUS_NO_NETWORK && retry_with_initialization) {
                     next_mode = EZB_BDB_MODE_INITIALIZATION;
-                    set_led(LED_RED);
                 }
                 steering_retry_pending = true;
-                alarm_timer_schedule(esp_zigbee_alarm_bdb_commissioning, next_mode, 5000);
+                alarm_timer_schedule(esp_zigbee_alarm_bdb_commissioning,
+                                     next_mode, ROUTER_STEERING_RETRY_MS);
                 if (status == EZB_BDB_STATUS_NO_NETWORK) {
-                    set_led(LED_RED);
+                    set_led(LED_AMBER);
                     retry_with_initialization = !retry_with_initialization;
                 }
             }
@@ -353,6 +363,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Arrancando Router Zigbee Puro");
 
-    BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main", 8192, NULL, 5, NULL);
+    BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main",
+                                ZIGBEE_MAIN_TASK_STACK_SIZE, NULL, 5, NULL);
     ESP_LOGI(TAG, "app_main: xTaskCreate=%ld (pdPASS=%ld)", (long)ok, (long)pdPASS);
 }
