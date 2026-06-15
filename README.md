@@ -15,6 +15,75 @@ Firmware ESP-IDF para ESP32-C6 que implementa un **router Zigbee puro** con LED 
 
 ---
 
+## Pinout — ESP32-C6-DevKitC-1 (módulo WROOM-1 N6)
+
+```
+                    ESP32-C6-DevKitC-1
+                  .-------------------.
+                  |  [ USB-C (UART) ] |
+                  |  [ USB-C (USB)  ] |
+                  |   [RST]  [BOOT]   |
+                  |                   |
+    3V3  ◄──  1 |                   | 38 ──►  GND
+    RST  ◄──  2 |                   | 37 ──►  GND
+    IO4  ◄──  3 |    ESP32-C6        | 36 ──►  5V
+    IO5  ◄──  4 |    WROOM-1 N6      | 35 ──►  GND
+    IO6  ◄──  5 |                   | 34 ──►  IO23
+    IO7  ◄──  6 |                   | 33 ──►  IO22
+    IO0  ◄──  7 |   [WS2812 LED]    | 32 ──►  IO21
+    IO1  ◄──  8 |   [ GPIO 8 ]●     | 31 ──►  IO20
+    IO8  ◄──  9 |                   | 30 ──►  IO19
+   IO10  ◄── 10 |                   | 29 ──►  IO18
+   IO11  ◄── 11 |                   | 28 ──►  IO15
+    IO2  ◄── 12 |                   | 27 ──►  IO13
+    IO3  ◄── 13 |                   | 26 ──►  IO12
+    GND  ◄── 14 |                   | 25 ──►  GND
+    5V   ◄── 15 |                   | 24 ──►  IO9
+   NC    ◄── 16 |                   | 23 ──►  IO17 (TX0)
+   IO16  ◄── 17 |                   | 22 ──►  IO16 (RX0)
+                  |                   |
+                  '-------------------'
+```
+
+### Tabla de funciones GPIO
+
+| GPIO | Pin | Función principal | Funciones alternativas | Notas |
+|------|-----|--------------------|------------------------|-------|
+| IO0  |  7  | GPIO               | XTAL_32K_P, LP_GPIO0, ADC1_CH0 | Strapping pin |
+| IO1  |  8  | GPIO               | XTAL_32K_N, LP_GPIO1, ADC1_CH1 | |
+| IO2  | 12  | SPI FSPIQ          | LP_GPIO2, ADC1_CH2 | |
+| IO3  | 13  | GPIO               | LP_GPIO3, ADC1_CH3 | |
+| IO4  |  3  | JTAG MTMS / I2C SDA| LP_GPIO4, LP_UART_RXD, ADC1_CH4, FSPIHD | Strapping pin |
+| IO5  |  4  | JTAG MTDI / I2C SCL| LP_GPIO5, LP_UART_TXD, ADC1_CH5, FSPIWP | Strapping pin |
+| IO6  |  5  | JTAG MTCK          | LP_GPIO6, LP_I2C_SDA, ADC1_CH6, FSPICLK | |
+| IO7  |  6  | JTAG MTDO          | LP_GPIO7, LP_I2C_SCL, FSPID | |
+| **IO8**  |  **9**  | **LED WS2812 (este fw)** | GPIO | **Strapping pin — usado por este firmware** |
+| IO9  | 24  | BOOT button        | ADC2_CH1 | Strapping pin — botón BOOT |
+| IO10 | 10  | GPIO               | — | |
+| IO11 | 11  | GPIO / SPI Flash   | — | Puede estar reservado para flash interna |
+| IO12 | 26  | USB JTAG D−        | — | USB nativo (no usar si se usa USB CDC) |
+| IO13 | 27  | USB JTAG D+        | — | USB nativo (no usar si se usa USB CDC) |
+| IO15 | 28  | GPIO               | — | Strapping pin |
+| IO16 | 17  | GPIO               | — | |
+| IO17 | 23  | UART0 TX           | FSPICS0 | Conectado al chip USB–UART (CH343) |
+| IO18 | 22  | UART0 RX           | SDIO_CMD, FSPICS2 | Conectado al chip USB–UART (CH343) |
+| IO19 | 30  | USB D−             | SDIO_CLK, FSPICS3 | USB nativo |
+| IO20 | 31  | USB D+             | SDIO_DATA0, FSPICS4 | USB nativo |
+| IO21 | 32  | GPIO / SPI CS      | SDIO_DATA1, FSPICS5 | |
+| IO22 | 33  | GPIO / SPI MOSI    | SDIO_DATA2 | |
+| IO23 | 34  | GPIO / SPI MISO    | SDIO_DATA3 | |
+
+### Notas de uso
+
+- ⚠️ **Strapping pins** (IO0, IO4, IO5, IO8, IO9, IO15): el nivel en el momento del reset determina el modo de arranque. Dejar sin conectar o con resistencia pull-up/pull-down adecuada.
+- 🔴 **IO8** está conectado al **LED WS2812 onboard** en el DevKitC-1 y es el pin utilizado por este firmware para el LED de estado.
+- 🟡 **IO4–IO7**: pines JTAG. Disponibles para GPIO si no se usa el depurador por hardware.
+- 🔵 **IO12–IO13, IO19–IO20**: pines del bus USB nativo del SoC. Reservados si se usa USB CDC/JTAG.
+- ⚪ **IO17/IO18**: conectados internamente al chip USB–UART (CH343). Son los pines de la consola serie (`idf.py monitor`).
+- 🟢 **IO11**: puede estar reservado para la flash interna en variantes con OSPI. Comprobar el esquemático de la placa concreta.
+
+---
+
 ## Requisitos de construcción
 
 - [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/) ≥ 6.2.0 con soporte para ESP32-C6
