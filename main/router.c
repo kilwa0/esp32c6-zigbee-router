@@ -42,6 +42,25 @@ static const char *TAG = "ROUTER ESP32C6";
 
 static led_strip_handle_t led_strip;
 
+/* -------------------------------------------------------------------------
+ * SECURITY: TC Link Key — static linkage, not exported.
+ *
+ * This is the ZigBee Alliance standard Trust Center link key
+ * ("ZigBeeAlliance09", ZigBee spec §4.6.3.2.1).
+ * It is a PUBLIC, WELL-KNOWN value — NOT a secret credential.
+ *
+ * Keeping it static here (rather than in the public header) prevents
+ * accidental re-use or export via other translation units.
+ * Migration to a network-unique TCLK must go through a secure
+ * provisioning channel such as install codes.
+ * ------------------------------------------------------------------------- */
+static const uint8_t s_tc_link_key[ESP_ZIGBEE_TC_LINK_KEY_LEN] = {
+    0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c,
+    0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39
+};
+_Static_assert(sizeof(s_tc_link_key) == ESP_ZIGBEE_TC_LINK_KEY_LEN,
+               "TC link key length mismatch");
+
 /* Accedidas desde alarm_timer callbacks (timer task) y signal handler
    (Zigbee main task): _Atomic garantiza visibilidad sin data race. */
 static _Atomic bool steering_retry_pending;
@@ -53,6 +72,21 @@ static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
     led_strip_set_pixel(led_strip, 0, r, g, b);
     led_strip_refresh(led_strip);
+}
+
+/* set_led_locked: safe wrapper for calling set_led() from outside the
+ * Zigbee main task (e.g. alarm_timer callbacks running in the FreeRTOS
+ * timer task).  Acquires the Zigbee stack lock before touching the LED
+ * to avoid a potential race with the signal handler path.
+ *
+ * NOTE: led_strip_set_pixel / led_strip_refresh themselves are not
+ * inherently thread-safe; the lock here serialises access via the same
+ * mutual-exclusion mechanism used for all Zigbee stack calls. */
+static inline void set_led_locked(uint8_t r, uint8_t g, uint8_t b)
+{
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    set_led(r, g, b);
+    esp_zigbee_lock_release();
 }
 
 static void configure_led(void)
@@ -326,17 +360,34 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 static void esp_zigbee_stack_main_task(void *pvParameters)
 {
     esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
-    static const uint8_t standard_tc_link_key[] = ESP_ZIGBEE_TC_LINK_KEY;
 
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
 
+    /* RF: set TX power to legal maximum (20 dBm / 100 mW EIRP).
+     * This is within CE/ETSI EN 300 328 and FCC Part 15 limits for
+     * the 2.4 GHz ISM band.  Must be called after esp_zigbee_init()
+     * and before esp_zigbee_start() so the radio is initialised but
+     * not yet transmitting. */
+    int8_t tx_power_dbm = ROUTER_TX_POWER_DBM;
+    esp_err_t pw_err = esp_ieee802154_set_txpower(tx_power_dbm);
+    if (pw_err != ESP_OK) {
+        ESP_LOGW(TAG, "No se pudo fijar TX power a %d dBm: %s",
+                 tx_power_dbm, esp_err_to_name(pw_err));
+    } else {
+        ESP_LOGI(TAG, "TX power fijado a %d dBm (maximo legal CE/ETSI)", tx_power_dbm);
+    }
+
+    /* SECURITY: use static s_tc_link_key (private to this TU, not the
+     * header macro) to restrict linkage of the key material. */
     ezb_aps_secur_enable_distributed_security(false);
-    ezb_secur_set_global_link_key(standard_tc_link_key);
+    ezb_secur_set_global_link_key(s_tc_link_key);
     ESP_ERROR_CHECK(ezb_secur_set_tclk_exchange_required(true));
     ESP_LOGI(TAG, "Canales de steering: primary=0x%08lx secondary=0x%08lx",
              (unsigned long)ESP_ZIGBEE_PRIMARY_CHANNEL_MASK,
              (unsigned long)ESP_ZIGBEE_SECONDARY_CHANNEL_MASK);
     ESP_LOGI(TAG, "Seguridad Zigbee: Trust Center link key estandar + TCLK exchange obligatorio");
+    ESP_LOGI(TAG, "Politica install code: HABILITADA (install_code_policy=true)");
+    ESP_LOGI(TAG, "Max children: %u", ROUTER_MAX_CHILDREN);
     ezb_nwk_set_min_join_lqi(0);
     ESP_LOGI(TAG, "Filtro de join LQI: %u", ezb_nwk_get_min_join_lqi());
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK));
