@@ -193,7 +193,6 @@ The router manages its network lifecycle via the `esp_zigbee_app_signal_handler`
 | `NWK_SIGNAL_PERMIT_JOIN_STATUS` active | Permit join open on the PAN | 🔵 Blue |
 | `NWK_SIGNAL_PERMIT_JOIN_STATUS` closed | Permit join closed | 🟢 Green |
 | `ZDO_SIGNAL_LEAVE` | Device removed from the network | 🔴 Red |
-| Unknown signal | Informational log | ⚪ White |
 
 ### Steering Retry Logic
 
@@ -223,14 +222,12 @@ The `retry_with_initialization` variable controls the alternation. A retry is on
 | 🟡 Amber | 30 | 7 | 0 | Searching for network / join rejected / device alive but networkless |
 | 🟢 Green | 0 | 16 | 0 | Connected to Zigbee network |
 | 🔵 Blue | 0 | 0 | 16 | Permit join active on the PAN |
-| ⚪ White | 16 | 16 | 16 | Unknown Zigbee signal (diagnostic) |
 
 **Colour semantics:**
 - 🔴 **Red** — critical error or total absence of network (device not operational)
 - 🟡 **Amber** — warning / in progress: device is alive and actively retrying
 - 🟢 **Green** — nominal state: router is integrated into the network and routing traffic
 - 🔵 **Blue** — informational: the PAN pairing window is open
-- ⚪ **White** — diagnostic: Zigbee signal not recognised by the firmware
 
 ---
 

@@ -30,7 +30,6 @@ static const char *TAG = "ROUTER ESP32C6";
  *   AMBER -> advertencia / buscando red / join rechazado (vivo, sin red)
  *   GREEN -> unido a la red y operativo
  *   BLUE  -> ventana permit-join abierta
- *   WHITE -> senal Zigbee desconocida (diagnostico)
  *
  * AMBER es preferible a ORANGE como nombre porque es el color
  * universalmente asociado a "atencion / en proceso" en semaforos y
@@ -39,7 +38,6 @@ static const char *TAG = "ROUTER ESP32C6";
 #define LED_GREEN   0, 16,  0
 #define LED_BLUE    0,  0, 16
 #define LED_AMBER  30,  7,  0
-#define LED_WHITE  16, 16, 16
 
 static led_strip_handle_t led_strip;
 
@@ -352,7 +350,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 
     default:
         ESP_LOGI(TAG, "ZB signal: %s (0x%02x)", ezb_app_signal_to_string(signal_type), signal_type);
-        set_led(LED_WHITE);
+        set_led(LED_GREEN);
         break;
     }
     return true;
