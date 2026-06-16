@@ -326,4 +326,16 @@ Este proyecto sigue [Semantic Versioning](https://semver.org/lang/es/). El histo
 
 ## Licencia
 
-CC0-1.0 — ver cabeceras de los ficheros fuente.
+El código fuente original de este proyecto está publicado bajo **CC0-1.0** (dominio público). Ver cabeceras SPDX en los ficheros fuente.
+
+Sin embargo, este firmware **enlaza y depende** de las siguientes bibliotecas de Espressif, que tienen sus propias licencias:
+
+| Dependencia | Licencia | Notas |
+|-------------|----------|-------|
+| [ESP-IDF](https://github.com/espressif/esp-idf) | Apache-2.0 | Framework base |
+| [esp-zigbee-sdk](https://github.com/espressif/esp-zigbee-sdk) | Apache-2.0 | SDK Zigbee de alto nivel |
+| [esp-zboss-lib](https://github.com/espressif/esp-zboss-lib) | [Licencia Espressif](https://github.com/espressif/esp-zboss-lib/blob/master/LICENSE) | Stack ZBOSS en binario; licencia separada |
+
+> ⚠️ Cualquier redistribución o producto derivado debe cumplir con los términos de **todas** las licencias anteriores, incluyendo los requisitos de atribución de Apache-2.0 y las condiciones específicas de `esp-zboss-lib`.
+
+Para contribuir, ver [CONTRIBUTING.md](CONTRIBUTING.md).
