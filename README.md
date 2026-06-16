@@ -294,6 +294,19 @@ Configurada en `partitions.csv` con una partición `zb_storage` dedicada al alma
 
 ---
 
+## Versiones
+
+Este proyecto sigue [Semantic Versioning](https://semver.org/lang/es/). El historial completo de cambios está en [CHANGELOG.md](CHANGELOG.md).
+
+| Versión | Fecha | Resumen |
+|---------|-------|---------|
+| **v2.0.0** | 2026-06-16 | Botón BOOT: triple-tap toggle TX, hold 5 s factory reset. Corrección borrado NVS. |
+| **v1.0.0** | 2026-06-15 | Router Zigbee funcional, LED RGB, steering retry con alternancia INIT/STEERING. |
+
+> El seguimiento de **PATCH** comienza a partir de la próxima release. Las versiones anteriores no reportaban la versión al hub y los bugfixes no se versionaban de forma independiente.
+
+---
+
 ## Resolución de problemas
 
 | Síntoma | Causa probable | Acción |
