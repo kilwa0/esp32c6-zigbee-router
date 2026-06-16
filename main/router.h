@@ -1,16 +1,12 @@
-/*
- * SPDX-FileCopyrightText: 2021-2026 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: CC0-1.0
- */
-
 #pragma once
 
-/* Primary: channels 15, 20, 25 — least WiFi overlap in the EU 2.4 GHz band.
+/*
+ * Primary: channels 15, 20, 25 — least WiFi overlap in the EU 2.4 GHz band.
  * Secondary: full 11-26 scan as fallback.
  * Having identical primary and secondary makes the BDB repeat the same
  * scan twice on NO_NETWORK, adding ~8-12 s of useless join latency.
- * See ZigBee spec §3.6.1.4.1. */
+ * See ZigBee spec §3.6.1.4.1.
+ */
 #define ESP_ZIGBEE_PRIMARY_CHANNEL_MASK   ((1UL << 15) | (1UL << 20) | (1UL << 25))
 #define ESP_ZIGBEE_SECONDARY_CHANNEL_MASK (0x07FFF800U)
 
@@ -63,11 +59,16 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 #define ROUTER_JOIN_OPEN_DURATION_S   255U
 
 /* RF transmit power in dBm.
- * 20 dBm is the hardware maximum of the ESP32-C6 IEEE 802.15.4 radio
- * and stays within the CE/ETSI EN 300 328 limit of 100 mW EIRP in the
- * 2.4 GHz ISM band.  Reduce for bench testing or dense deployments where
- * range extension is not needed. */
-#define ROUTER_TX_POWER_DBM           20
+ *
+ * HIGH: 20 dBm is the hardware maximum of the ESP32-C6 IEEE 802.15.4 radio
+ *       and stays within the CE/ETSI EN 300 328 limit of 100 mW EIRP in the
+ *       2.4 GHz ISM band.
+ * LOW:  5 dBm conservative value for bench testing or dense deployments.
+ *
+ * The BOOT button triple-tap gesture toggles between these two values at
+ * runtime (volatile — reverts to HIGH on reboot). */
+#define ROUTER_TX_POWER_HIGH_DBM      20
+#define ROUTER_TX_POWER_LOW_DBM        5
 
 /* Zigbee main task stack size.
  * Espressif documents 8 KB as the minimum; we add 2 KB of headroom for

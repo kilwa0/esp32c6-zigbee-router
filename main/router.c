@@ -19,25 +19,34 @@
 #include "sdkconfig.h"
 
 #include "router.h"
+#include "button.h"
 
 static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
 /* Colores del LED de estado (R, G, B) -- valores 0-255.
- * Semantica:
- *   RED   -> error critico / dispositivo fuera de red
- *   AMBER -> advertencia / buscando red / join rechazado (vivo, sin red)
- *   GREEN -> unido a la red y operativo
- *   BLUE  -> ventana permit-join abierta
+ *
+ * Semantica operacional:
+ *   RED         -> error / dispositivo fuera de red (suave, no deslumbrante)
+ *   AMBER       -> advertencia / buscando red / join rechazado
+ *   GREEN       -> unido a la red y operativo
+ *   BLUE        -> ventana permit-join abierta
+ *
+ * Colores de feedback de gestos (modulo button.c):
+ *   BRIGHT_RED  -> confirmacion TX potencia maxima (20 dBm) -- llama la atencion
+ *   SOFT_BLUE   -> confirmacion TX potencia reducida (5 dBm) -- tranquilizador
+ *   BRIGHT_PURPLE (MAGENTA) -> accion destructiva en curso (reboot / factory reset)
  *
  * AMBER es preferible a ORANGE como nombre porque es el color
  * universalmente asociado a "atencion / en proceso" en semaforos y
- * electronica de estado (vs ORANGE que es solo un tono de color). */
-#define LED_RED    16,  0,  0
-#define LED_GREEN   0, 16,  0
-#define LED_BLUE    0,  0, 16
-#define LED_AMBER  30,  7,  0
+ * electronica de estado. */
+#define LED_RED     64,  0,  0   /* suave: error de red, no deslumbrante        */
+#define LED_GREEN    0, 16,  0
+#define LED_BLUE     0,  0, 16
+#define LED_AMBER   30,  7,  0
+/* Los colores de feedback de gestos se definen localmente en button.c
+ * para no contaminar este espacio de nombres. */
 
 static led_strip_handle_t led_strip;
 
@@ -67,21 +76,22 @@ static _Atomic bool steering_retry_pending;
    variables estaticas: comunica la intencion al lector. */
 static _Atomic bool retry_with_initialization = false;
 
-static inline void set_led(uint8_t r, uint8_t g, uint8_t b)
+/* set_led: NOT static — button.c links against set_led_locked() which
+ * calls this function.  Internal use only; callers outside this TU must
+ * use set_led_locked() to acquire the Zigbee stack lock first. */
+void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
     led_strip_set_pixel(led_strip, 0, r, g, b);
     led_strip_refresh(led_strip);
 }
 
-/* set_led_locked: safe wrapper for calling set_led() from outside the
- * Zigbee main task (e.g. alarm_timer callbacks running in the FreeRTOS
- * timer task).  Acquires the Zigbee stack lock before touching the LED
- * to avoid a potential race with the signal handler path.
+/* set_led_locked: thread-safe wrapper for calling set_led() from outside
+ * the Zigbee main task (e.g. alarm_timer callbacks, button.c gesture
+ * handlers running in FreeRTOS timer task).  Acquires the Zigbee stack
+ * lock before touching the LED to avoid a race with the signal handler.
  *
- * NOTE: led_strip_set_pixel / led_strip_refresh themselves are not
- * inherently thread-safe; the lock here serialises access via the same
- * mutual-exclusion mechanism used for all Zigbee stack calls. */
-static inline void set_led_locked(uint8_t r, uint8_t g, uint8_t b)
+ * Exported (non-static) so button.c can link against it. */
+void set_led_locked(uint8_t r, uint8_t g, uint8_t b)
 {
     esp_zigbee_lock_acquire(portMAX_DELAY);
     set_led(r, g, b);
@@ -129,9 +139,6 @@ static esp_err_t register_router_endpoint(void)
         goto cleanup_dev;
     }
 
-    /* API: ezb_zcl_basic_create_cluster_desc(const void *cfg, uint8_t role_mask)
-       Pasamos config explicita para fijar zcl_version y power_source
-       (atributos mandatorios del cluster Basic server). */
     ezb_zcl_basic_cluster_server_config_t basic_cfg = {
         .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
         .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
@@ -167,23 +174,18 @@ static esp_err_t register_router_endpoint(void)
         ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
         goto cleanup_ep;
     }
-    /* basic_desc pertenece ahora a ep_desc */
 
     ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
-        /* Ownership de ep_desc respecto a dev_desc es indeterminado tras fallo:
-           no llamar free_endpoint_desc por separado para evitar double-free. */
         goto cleanup_dev;
     }
-    /* ep_desc pertenece ahora a dev_desc */
 
     ret = ezb_af_device_desc_register(dev_desc);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo registrar device desc: %s", esp_err_to_name(ret));
         goto cleanup_dev;
     }
-    /* dev_desc registrado: el stack es su dueno a partir de aqui */
 
     ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x (range_extender)",
              ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID, 0x0008);
@@ -231,8 +233,6 @@ static void esp_zigbee_alarm_bdb_commissioning(alarm_timer_arg_t arg)
 static void send_device_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
-    /* alarm_timer callbacks se ejecutan en el timer task de FreeRTOS,
-       fuera de la Zigbee main task: lock obligatorio al acceder al stack. */
     esp_zigbee_lock_acquire(portMAX_DELAY);
     ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
     ezb_zdo_device_annce_req(&annce);
@@ -363,11 +363,10 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
 
     /* RF: set TX power to legal maximum (20 dBm / 100 mW EIRP).
-     * This is within CE/ETSI EN 300 328 and FCC Part 15 limits for
-     * the 2.4 GHz ISM band.  Must be called after esp_zigbee_init()
-     * and before esp_zigbee_start() so the radio is initialised but
-     * not yet transmitting. */
-    int8_t tx_power_dbm = ROUTER_TX_POWER_DBM;
+     * Must be called after esp_zigbee_init() and before esp_zigbee_start()
+     * so the radio is initialised but not yet transmitting.
+     * The BOOT button triple-tap can toggle this at runtime. */
+    int8_t tx_power_dbm = ROUTER_TX_POWER_HIGH_DBM;
     esp_err_t pw_err = esp_ieee802154_set_txpower(tx_power_dbm);
     if (pw_err != ESP_OK) {
         ESP_LOGW(TAG, "No se pudo fijar TX power a %d dBm: %s",
@@ -376,8 +375,6 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
         ESP_LOGI(TAG, "TX power fijado a %d dBm (maximo legal CE/ETSI)", tx_power_dbm);
     }
 
-    /* SECURITY: use static s_tc_link_key (private to this TU, not the
-     * header macro) to restrict linkage of the key material. */
     ezb_aps_secur_enable_distributed_security(false);
     ezb_secur_set_global_link_key(s_tc_link_key);
     ESP_ERROR_CHECK(ezb_secur_set_tclk_exchange_required(true));
@@ -405,6 +402,11 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
 void app_main(void)
 {
     configure_led();
+
+    /* Initialise BOOT button gesture handler.
+     * Must be called after configure_led() (LED strip ready) and before
+     * esp_zigbee_start() (ISR service not yet contended). */
+    ESP_ERROR_CHECK(button_init());
 
     ESP_LOGI(TAG, "app_main: antes de init");
 
