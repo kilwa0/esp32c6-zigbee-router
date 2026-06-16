@@ -1,37 +1,39 @@
-# Contribuir a esp32c6-zigbee-router
+# Contributing to esp32c6-zigbee-router
 
-Gracias por tu interés en contribuir. Este documento describe el flujo de trabajo que seguimos para mantener el historial limpio y las revisiones trazables.
+Thank you for your interest in contributing. This document describes the workflow we follow to keep a clean history and traceable reviews.
 
----
-
-## Código de conducta
-
-Este proyecto es de naturaleza abierta y constructiva. Se espera que cualquier contribución sea respetuosa, técnicamente justificada y compatible con la licencia del proyecto (ver más abajo).
+> 🇪🇸 Versión en español: [Docs/LNG/ES/CONTRIBUTING.es.md](Docs/LNG/ES/CONTRIBUTING.es.md)
 
 ---
 
-## Licencia de las contribuciones
+## Code of Conduct
 
-Al enviar una contribución a este repositorio aceptas que tu código se publica bajo los mismos términos que el proyecto: **CC0-1.0** para el código fuente original. Ten en cuenta que el proyecto enlaza con dependencias de terceros bajo Apache-2.0 y otras licencias (ver sección *Licencia* del README); tu contribución debe ser compatible con ellas.
+This project is open and constructive. Any contribution is expected to be respectful, technically justified, and compatible with the project license (see below).
 
 ---
 
-## Flujo de trabajo
+## License of Contributions
 
-### 1. Crea un fork
+By submitting a contribution to this repository you agree that your code is published under the same terms as the project: **CC0-1.0** for original source code. Note that the project links against third-party dependencies under Apache-2.0 and other licenses (see the *License* section of the README); your contribution must be compatible with all of them.
 
-Haz un fork del repositorio desde GitHub. Trabaja siempre desde tu fork, nunca directamente sobre el upstream.
+---
+
+## Workflow
+
+### 1. Fork the repository
+
+Fork the repository on GitHub. Always work from your fork, never directly on upstream.
 
 ```bash
-# Clonar tu fork
-git clone https://github.com/<tu-usuario>/esp32c6-zigbee-router.git
+# Clone your fork
+git clone https://github.com/<your-username>/esp32c6-zigbee-router.git
 cd esp32c6-zigbee-router
 
-# Añadir el upstream como remoto
+# Add upstream as a remote
 git remote add upstream https://github.com/kilwa0/esp32c6-zigbee-router.git
 ```
 
-### 2. Sincroniza con upstream antes de empezar
+### 2. Sync with upstream before starting
 
 ```bash
 git fetch upstream
@@ -39,35 +41,35 @@ git checkout main
 git merge upstream/main
 ```
 
-### 3. Crea una rama con nombre descriptivo
+### 3. Create a descriptively named branch
 
-Usa el prefijo que corresponda al tipo de cambio:
+Use the prefix that matches the type of change:
 
-| Prefijo | Cuándo usarlo |
-|---------|---------------|
-| `feat/` | Nueva funcionalidad |
-| `fix/` | Corrección de bug |
-| `docs/` | Solo documentación |
-| `refactor/` | Refactor sin cambio de comportamiento |
-| `chore/` | Tareas de mantenimiento (deps, CI, etc.) |
+| Prefix | When to use |
+|--------|-------------|
+| `feat/` | New feature |
+| `fix/` | Bug fix |
+| `docs/` | Documentation only |
+| `refactor/` | Refactor without behaviour change |
+| `chore/` | Maintenance tasks (deps, CI, etc.) |
 
 ```bash
-git checkout -b feat/nombre-descriptivo
+git checkout -b feat/descriptive-name
 ```
 
-### 4. Desarrolla en commits atómicos
+### 4. Develop in atomic commits
 
-Cada commit debe representar un cambio coherente y compilable. Sigue el formato [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/):
+Each commit must represent a coherent, buildable change. Follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) format:
 
 ```
-<tipo>(<ámbito opcional>): <descripción corta en imperativo>
+<type>(<optional scope>): <short description in imperative mood>
 
-<cuerpo opcional: qué cambia y por qué, no cómo>
+<optional body: what changes and why, not how>
 
-<footer opcional: BREAKING CHANGE o refs a issues>
+<optional footer: BREAKING CHANGE or issue refs>
 ```
 
-Ejemplos:
+Examples:
 
 ```
 feat(button): add triple-tap TX power toggle
@@ -90,43 +92,43 @@ in any partition state.
 docs: rewrite README in Spanish, document button gestures
 ```
 
-### 5. Abre un Pull Request desde tu fork
+### 5. Open a Pull Request from your fork
 
-Desde GitHub, abre un PR desde `<tu-usuario>/esp32c6-zigbee-router:<tu-rama>` hacia `kilwa0/esp32c6-zigbee-router:main` (o hacia la rama de feature correspondiente si tu cambio se basa en trabajo en curso).
+From GitHub, open a PR from `<your-username>/esp32c6-zigbee-router:<your-branch>` targeting `kilwa0/esp32c6-zigbee-router:main` (or the relevant feature branch if your change builds on work in progress).
 
-**El PR debe incluir:**
-- Título en formato Conventional Commits
-- Descripción con: qué cambia, por qué y cómo probarlo
-- Si añade funcionalidad nueva: actualizar `CHANGELOG.md` en la sección `[Sin publicar]`
+**The PR must include:**
+- A title in Conventional Commits format
+- A description covering: what changes, why, and how to test it
+- If adding new functionality: update `CHANGELOG.md` under the `[Unreleased]` section
 
-### 6. Revisión y merge
+### 6. Review and merge
 
-El mantenedor revisará el PR, podrá pedir cambios y hará merge cuando esté listo. No hagas merge tú mismo de tu PR al upstream.
-
----
-
-## Convenciones de código
-
-- **Lenguaje**: C (C17), estilo ESP-IDF.
-- **Formato**: 4 espacios, sin tabs. Líneas ≤ 100 caracteres.
-- **Comentarios**: en inglés (el código es inglés, la documentación es español).
-- **Cabeceras de fichero**: mantener el identificador SPDX `CC0-1.0` en ficheros nuevos propios.
-- **Compilación limpia**: el código debe compilar sin warnings con `idf.py build` antes de abrir el PR.
+The maintainer will review the PR, may request changes, and will merge it when ready. Do not merge your own PR into upstream.
 
 ---
 
-## Versionado
+## Code Conventions
 
-Seguimos [Semantic Versioning](https://semver.org/lang/es/). Antes de abrir un PR que introduzca cambios de comportamiento, consulta la tabla de la sección *Versiones* del README o la cabecera del `CHANGELOG.md` para determinar qué componente de versión incrementar.
+- **Language**: C (C17), ESP-IDF style.
+- **Formatting**: 4 spaces, no tabs. Lines ≤ 100 characters.
+- **Comments**: in English (source code is English, user-facing documentation is Spanish).
+- **File headers**: keep the SPDX identifier `CC0-1.0` in new source files you own.
+- **Clean build**: code must compile without warnings with `idf.py build` before opening a PR.
 
-| Tipo de cambio | Componente |
+---
+
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/). Before opening a PR that introduces behavioural changes, consult the *Versions* table in the README or the header of `CHANGELOG.md` to determine which version component to increment.
+
+| Type of change | Component |
 |---|---|
-| Gesto nuevo, cambio de semántica del LED, parámetro Zigbee | **MAJOR** |
-| Nueva funcionalidad no disruptiva | **MINOR** |
-| Bugfix puro | **PATCH** |
+| New gesture, LED semantic change, Zigbee parameter change | **MAJOR** |
+| New non-disruptive feature | **MINOR** |
+| Pure bug fix | **PATCH** |
 
 ---
 
-## Preguntas
+## Questions
 
-Abre un [issue](https://github.com/kilwa0/esp32c6-zigbee-router/issues) con la etiqueta `question` si tienes dudas antes de empezar a desarrollar.
+Open an [issue](https://github.com/kilwa0/esp32c6-zigbee-router/issues) with the `question` label if you have doubts before starting development.
