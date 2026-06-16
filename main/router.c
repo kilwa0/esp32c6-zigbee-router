@@ -28,40 +28,22 @@ static const char *TAG = "ROUTER ESP32C6";
 /* Colores del LED de estado (R, G, B) -- valores 0-255.
  *
  * Semantica operacional:
- *   RED         -> error / dispositivo fuera de red (suave, no deslumbrante)
- *   AMBER       -> advertencia / buscando red / join rechazado
- *   GREEN       -> unido a la red y operativo
- *   BLUE        -> ventana permit-join abierta
+ *   RED    -> error / fuera de red
+ *   AMBER  -> buscando red / join en progreso
+ *   GREEN  -> unido y operativo
+ *   BLUE   -> ventana permit-join abierta
  *
- * Colores de feedback de gestos (modulo button.c):
- *   BRIGHT_RED  -> confirmacion TX potencia maxima (20 dBm) -- llama la atencion
- *   SOFT_BLUE   -> confirmacion TX potencia reducida (5 dBm) -- tranquilizador
- *   BRIGHT_PURPLE (MAGENTA) -> accion destructiva en curso (reboot / factory reset)
- *
- * AMBER es preferible a ORANGE como nombre porque es el color
- * universalmente asociado a "atencion / en proceso" en semaforos y
- * electronica de estado. */
-#define LED_RED     64,  0,  0   /* suave: error de red, no deslumbrante        */
+ * Colores de feedback de gestos (button.c):
+ *   BRIGHT_RED (255,0,0)   -> TX boost 20 dBm activo
+ *   SOFT_BLUE  (0,0,64)    -> TX normal 8 dBm activo
+ *   MAGENTA    (255,0,255) -> accion destructiva en curso */
+#define LED_RED     64,  0,  0
 #define LED_GREEN    0, 16,  0
 #define LED_BLUE     0,  0, 16
 #define LED_AMBER   30,  7,  0
-/* Los colores de feedback de gestos se definen localmente en button.c
- * para no contaminar este espacio de nombres. */
 
 static led_strip_handle_t led_strip;
 
-/* -------------------------------------------------------------------------
- * SECURITY: TC Link Key — static linkage, not exported.
- *
- * This is the ZigBee Alliance standard Trust Center link key
- * ("ZigBeeAlliance09", ZigBee spec §4.6.3.2.1).
- * It is a PUBLIC, WELL-KNOWN value — NOT a secret credential.
- *
- * Keeping it static here (rather than in the public header) prevents
- * accidental re-use or export via other translation units.
- * Migration to a network-unique TCLK must go through a secure
- * provisioning channel such as install codes.
- * ------------------------------------------------------------------------- */
 static const uint8_t s_tc_link_key[ESP_ZIGBEE_TC_LINK_KEY_LEN] = {
     0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c,
     0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39
@@ -69,28 +51,15 @@ static const uint8_t s_tc_link_key[ESP_ZIGBEE_TC_LINK_KEY_LEN] = {
 _Static_assert(sizeof(s_tc_link_key) == ESP_ZIGBEE_TC_LINK_KEY_LEN,
                "TC link key length mismatch");
 
-/* Accedidas desde alarm_timer callbacks (timer task) y signal handler
-   (Zigbee main task): _Atomic garantiza visibilidad sin data race. */
 static _Atomic bool steering_retry_pending;
-/* Inicializacion explicita aunque el estandar C garantice cero para
-   variables estaticas: comunica la intencion al lector. */
 static _Atomic bool retry_with_initialization = false;
 
-/* set_led: NOT static — button.c links against set_led_locked() which
- * calls this function.  Internal use only; callers outside this TU must
- * use set_led_locked() to acquire the Zigbee stack lock first. */
 void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
     led_strip_set_pixel(led_strip, 0, r, g, b);
     led_strip_refresh(led_strip);
 }
 
-/* set_led_locked: thread-safe wrapper for calling set_led() from outside
- * the Zigbee main task (e.g. alarm_timer callbacks, button.c gesture
- * handlers running in FreeRTOS timer task).  Acquires the Zigbee stack
- * lock before touching the LED to avoid a race with the signal handler.
- *
- * Exported (non-static) so button.c can link against it. */
 void set_led_locked(uint8_t r, uint8_t g, uint8_t b)
 {
     esp_zigbee_lock_acquire(portMAX_DELAY);
@@ -113,9 +82,6 @@ static void configure_led(void)
     led_strip_clear(led_strip);
 }
 
-/* Registra un endpoint minimo con device ID 0x0008 (range_extender, HA profile).
-   Solo incluye el cluster Basic con manufacturer_name y model_identifier para
-   que el coordinador pueda identificar el nodo. Sin clusters de aplicacion. */
 static esp_err_t register_router_endpoint(void)
 {
     esp_err_t ret = ESP_OK;
@@ -129,7 +95,7 @@ static esp_err_t register_router_endpoint(void)
     ezb_af_ep_config_t ep_config = {
         .ep_id              = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
         .app_profile_id     = EZB_AF_HA_PROFILE_ID,
-        .app_device_id      = 0x0008, /* range_extender */
+        .app_device_id      = 0x0008,
         .app_device_version = 0,
     };
     ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
@@ -228,8 +194,6 @@ static void esp_zigbee_alarm_bdb_commissioning(alarm_timer_arg_t arg)
     steering_retry_pending = false;
 }
 
-/* Unica funcion de Device Announce: reemplaza send_first_announce y
-   send_second_announce que tenian cuerpos identicos (DRY). */
 static void send_device_announce(alarm_timer_arg_t arg)
 {
     (void)arg;
@@ -243,10 +207,6 @@ static void send_device_announce(alarm_timer_arg_t arg)
 static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 {
     ezb_app_signal_type_t signal_type = ezb_app_signal_get_type(app_signal);
-    /* NOTA: NO poner set_led() aqui. Hacerlo causaba un flash rojo en
-       todas las senales, incluyendo EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS y
-       el caso default, enmascarando el estado real de la red. Cada case
-       gestiona su propio color de LED. */
 
     switch (signal_type) {
     case EZB_ZDO_SIGNAL_SKIP_STARTUP:
@@ -285,8 +245,6 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
         ezb_bdb_comm_status_t status = *((ezb_bdb_comm_status_t *)ezb_app_signal_get_params(app_signal));
         if (status == EZB_BDB_STATUS_SUCCESS) {
             steering_retry_pending = false;
-            ezb_extpanid_t extended_pan_id;
-            ezb_nwk_get_extended_panid(&extended_pan_id);
             ESP_LOGI(TAG, "=== JOIN OK: PAN 0x%04hx, Canal %d, Addr 0x%04hx ===",
                      ezb_nwk_get_panid(), ezb_nwk_get_current_channel(), ezb_nwk_get_short_address());
             set_led(LED_GREEN);
@@ -300,7 +258,6 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                      bdb_status_to_str(status), status, ROUTER_STEERING_RETRY_MS);
             if (status == EZB_BDB_STATUS_NO_NETWORK) {
                 ESP_LOGW(TAG, "No se encontro red Zigbee: verificar coordinador en modo emparejamiento y dentro de rango");
-                ESP_LOGI(TAG, "Siguiente reintento: %s", retry_with_initialization ? "INITIALIZATION" : "NETWORK_STEERING");
                 set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_NOT_PERMITTED) {
                 ESP_LOGW(TAG, "Join no permitido por el coordinador (permit join cerrado)");
@@ -309,7 +266,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                 ESP_LOGW(TAG, "Fallo de join: el coordinador rechazo la solicitud de join");
                 set_led(LED_AMBER);
             } else if (status == EZB_BDB_STATUS_TCLK_EX_FAILURE) {
-                ESP_LOGW(TAG, "Fallo intercambio de Trust Center Link Key: revisar politica de seguridad del coordinador");
+                ESP_LOGW(TAG, "Fallo intercambio de Trust Center Link Key");
             }
             if (!steering_retry_pending) {
                 alarm_timer_arg_t next_mode = EZB_BDB_MODE_NETWORK_STEERING;
@@ -320,7 +277,6 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                 alarm_timer_schedule(esp_zigbee_alarm_bdb_commissioning,
                                      next_mode, ROUTER_STEERING_RETRY_MS);
                 if (status == EZB_BDB_STATUS_NO_NETWORK) {
-                    set_led(LED_AMBER);
                     retry_with_initialization = !retry_with_initialization;
                 }
             }
@@ -359,39 +315,30 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 static void esp_zigbee_stack_main_task(void *pvParameters)
 {
     esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
-
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
 
-    /* RF: set TX power to legal maximum (20 dBm / 100 mW EIRP).
-     * Must be called after esp_zigbee_init() and before esp_zigbee_start()
-     * so the radio is initialised but not yet transmitting.
-     * The BOOT button triple-tap can toggle this at runtime. */
-    int8_t tx_power_dbm = ROUTER_TX_POWER_HIGH_DBM;
+    /* TX power: arrancar a LOW (8 dBm), potencia de trabajo normal.
+     * Triple-tap del boton BOOT alterna entre LOW (8) y HIGH (20) dBm. */
+    int8_t tx_power_dbm = ROUTER_TX_POWER_LOW_DBM;
     esp_err_t pw_err = esp_ieee802154_set_txpower(tx_power_dbm);
     if (pw_err != ESP_OK) {
         ESP_LOGW(TAG, "No se pudo fijar TX power a %d dBm: %s",
                  tx_power_dbm, esp_err_to_name(pw_err));
     } else {
-        ESP_LOGI(TAG, "TX power fijado a %d dBm (maximo legal CE/ETSI)", tx_power_dbm);
+        ESP_LOGI(TAG, "TX power fijado a %d dBm (normal de trabajo)", tx_power_dbm);
     }
 
     ezb_aps_secur_enable_distributed_security(false);
     ezb_secur_set_global_link_key(s_tc_link_key);
     ESP_ERROR_CHECK(ezb_secur_set_tclk_exchange_required(true));
-    ESP_LOGI(TAG, "Canales de steering: primary=0x%08lx secondary=0x%08lx",
+    ESP_LOGI(TAG, "Canales: primary=0x%08lx secondary=0x%08lx",
              (unsigned long)ESP_ZIGBEE_PRIMARY_CHANNEL_MASK,
              (unsigned long)ESP_ZIGBEE_SECONDARY_CHANNEL_MASK);
-    ESP_LOGI(TAG, "Seguridad Zigbee: Trust Center link key estandar + TCLK exchange obligatorio");
-    ESP_LOGI(TAG, "Politica install code: HABILITADA (install_code_policy=true)");
-    ESP_LOGI(TAG, "Max children: %u", ROUTER_MAX_CHILDREN);
     ezb_nwk_set_min_join_lqi(0);
-    ESP_LOGI(TAG, "Filtro de join LQI: %u", ezb_nwk_get_min_join_lqi());
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
-
     ESP_ERROR_CHECK(register_router_endpoint());
-
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
 
@@ -402,17 +349,11 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
 void app_main(void)
 {
     configure_led();
-
-    /* Initialise BOOT button gesture handler.
-     * Must be called after configure_led() (LED strip ready) and before
-     * esp_zigbee_start() (ISR service not yet contended). */
     ESP_ERROR_CHECK(button_init());
 
     ESP_LOGI(TAG, "app_main: antes de init");
-
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nvs_flash_init_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME));
-
     ESP_LOGI(TAG, "Arrancando Router Zigbee Puro");
 
     BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main",
