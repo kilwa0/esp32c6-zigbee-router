@@ -1,37 +1,29 @@
 #pragma once
 
-/*
- * button.h — BOOT button (GPIO9) gesture handler
- *
- * Gestures detected after firmware is running:
- *
- *   Triple-tap  (<500 ms between presses)  Toggle TX power 20 dBm <-> 5 dBm
- *   Hold 3 s                               Clean reboot
- *   Hold 5 s                               Factory reset (NVS erased) + reboot
- *
- * Call button_init() once from app_main(), after configure_led().
- * The module installs its own GPIO ISR and FreeRTOS software timers;
- * no further interaction is required from the caller.
- */
-
 #include "esp_err.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <stdbool.h>
 
 /**
- * @brief Initialise GPIO9 as input and install gesture detection.
+ * @brief Initialise the BOOT button subsystem.
  *
- * Must be called after configure_led() (LED strip must be ready) and
- * before esp_zigbee_start() so that the ISR service is installed while
- * the Zigbee stack lock is not yet held.
+ * Configures GPIO9 as input with internal pull-up, installs the ISR,
+ * and creates the four FreeRTOS software timers used for gesture
+ * detection (tap window, hold, blink, permit-join expiry).
  *
- * @return ESP_OK on success, or an esp_err_t forwarded from the GPIO
- *         driver / timer subsystem on failure.
+ * Must be called from app_main() before esp_zigbee_start().
+ *
+ * @return ESP_OK on success, ESP_ERR_NO_MEM if timer allocation fails.
  */
 esp_err_t button_init(void);
 
-#ifdef __cplusplus
-}
-#endif
+/**
+ * @brief Returns true while LED night mode is active.
+ *
+ * Router state machine calls this before every LED update to suppress
+ * visual feedback while the user has silenced the LED via single-tap.
+ * Night mode is volatile and resets on reboot.
+ *
+ * @return true  Night mode active; LED updates from router.c suppressed.
+ * @return false Normal operation; LED updates proceed as usual.
+ */
+bool button_is_night_mode(void);

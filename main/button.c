@@ -20,12 +20,14 @@ static const char *TAG = "BUTTON";
 #define BOOT_BTN_GPIO       9
 
 #define TAP_WINDOW_MS       500U    /* max ms between consecutive taps     */
-#define HOLD_5S_MS          5000U   /* hold threshold for factory reset     */
+#define HOLD_5S_MS          5000U   /* hold threshold for factory reset    */
 #define BLINK_SLOW_MS       200U
 #define BLINK_FAST_MS       100U
 #define TX_CONFIRM_FLASHES  3U
 #define TX_FLASH_ON_MS      120U
 #define TX_FLASH_OFF_MS     120U
+#define PERMIT_JOIN_S       60U     /* permit-join window duration         */
+#define PERMIT_JOIN_BLINK_MS 400U   /* slow green pulse during pj window   */
 
 /* -------------------------------------------------------------------------
  * LED helpers
@@ -38,31 +40,43 @@ extern void set_led_locked(uint8_t r, uint8_t g, uint8_t b);
 #define _SOFT_BLUE        0,   0,  64
 #define _GREEN            0,  16,   0
 #define _RED             64,   0,   0
+#define _SOFT_GREEN       0,  32,   0   /* permit-join blink colour        */
 
 /* -------------------------------------------------------------------------
  * State
  * ---------------------------------------------------------------------- */
 
 static volatile uint8_t  s_tap_count  = 0;
-static volatile bool     s_high_power = false;   /* boot default: 8 dBm */
+static volatile bool     s_high_power = false;   /* boot default: 8 dBm  */
 static volatile bool     s_holding    = false;   /* button currently held */
+static volatile bool     s_night_mode = false;   /* LED silenced         */
+static volatile bool     s_permit_join_active = false;
 
 static TimerHandle_t     s_tap_timer   = NULL;
 static TimerHandle_t     s_hold_timer  = NULL;
 static TimerHandle_t     s_blink_timer = NULL;
+static TimerHandle_t     s_pj_timer    = NULL;   /* permit-join expiry   */
 
-static volatile bool     s_blinking   = false;
+static volatile bool     s_blinking    = false;
 static volatile bool     s_blink_state = false;
 
+/* Colour used by blink_cb -- set before starting blink. */
+static volatile uint8_t  s_blink_r = 255;
+static volatile uint8_t  s_blink_g =   0;
+static volatile uint8_t  s_blink_b = 255;   /* default: magenta */
+
 /* -------------------------------------------------------------------------
- * Forward declarations (NO IRAM_ATTR here -- only on the definition)
+ * Forward declarations
  * ---------------------------------------------------------------------- */
 static void tap_window_cb(TimerHandle_t t);
 static void hold_cb(TimerHandle_t t);
 static void blink_cb(TimerHandle_t t);
+static void pj_expired_cb(TimerHandle_t t);
+static void do_night_mode_toggle(void);
+static void do_permit_join(void);
 static void do_tx_toggle(void);
 static void do_factory_reset(void);
-static void start_blink(bool fast);
+static void start_blink(bool fast, uint8_t r, uint8_t g, uint8_t b);
 static void stop_blink(void);
 static void btn_isr(void *arg);
 
@@ -83,7 +97,6 @@ static void IRAM_ATTR btn_isr(void *arg)
         /* RELEASE */
         s_holding = false;
         xTimerStopFromISR(s_hold_timer, &woken);
-        /* If the hold timer hadn't fired yet, cancel any blink in progress */
         s_blinking = false;
     }
 
@@ -98,9 +111,10 @@ static void tap_window_cb(TimerHandle_t t)
     (void)t;
     uint8_t taps = s_tap_count;
     s_tap_count  = 0;
-    if (taps >= 3) {
-        do_tx_toggle();
-    }
+
+    if      (taps == 1) do_night_mode_toggle();
+    else if (taps == 2) do_permit_join();
+    else if (taps >= 3) do_tx_toggle();
 }
 
 /* -------------------------------------------------------------------------
@@ -110,15 +124,14 @@ static void hold_cb(TimerHandle_t t)
 {
     (void)t;
     ESP_LOGW(TAG, "Hold 5 s -- factory reset triggered");
-    start_blink(true);
-    /* Brief fast blink so the user sees feedback before erase */
+    start_blink(true, _MAGENTA);
     vTaskDelay(pdMS_TO_TICKS(600));
     stop_blink();
     do_factory_reset();
 }
 
 /* -------------------------------------------------------------------------
- * Blink timer
+ * Blink timer -- uses s_blink_r/g/b set by start_blink()
  * ---------------------------------------------------------------------- */
 static void blink_cb(TimerHandle_t t)
 {
@@ -129,12 +142,85 @@ static void blink_cb(TimerHandle_t t)
         return;
     }
     s_blink_state = !s_blink_state;
-    s_blink_state ? set_led_locked(_MAGENTA) : set_led_locked(_OFF);
+    if (s_blink_state) {
+        set_led_locked(s_blink_r, s_blink_g, s_blink_b);
+    } else {
+        set_led_locked(_OFF);
+    }
+}
+
+/* -------------------------------------------------------------------------
+ * Permit-join expiry timer
+ * ---------------------------------------------------------------------- */
+static void pj_expired_cb(TimerHandle_t t)
+{
+    (void)t;
+    s_permit_join_active = false;
+    stop_blink();
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    esp_zigbee_bdb_open_network(0);
+    esp_zigbee_lock_release();
+    set_led_locked(_GREEN);
+    ESP_LOGI(TAG, "Permit-join window closed (timeout)");
 }
 
 /* -------------------------------------------------------------------------
  * Actions
  * ---------------------------------------------------------------------- */
+
+/**
+ * @brief Toggle LED night mode (single-tap).
+ *
+ * In night mode all Zigbee-state LED updates are suppressed by
+ * button_is_night_mode() guards in router.c.  Gesture feedback from
+ * button.c is NOT suppressed -- the user explicitly triggered it.
+ *
+ * @note Volatile; reverts to LED-on on reboot.
+ */
+static void do_night_mode_toggle(void)
+{
+    s_night_mode = !s_night_mode;
+    if (s_night_mode) {
+        set_led_locked(_OFF);
+        ESP_LOGI(TAG, "Night mode ON -- LED silenced");
+    } else {
+        set_led_locked(_GREEN);
+        ESP_LOGI(TAG, "Night mode OFF -- LED restored");
+    }
+}
+
+/**
+ * @brief Open or close a permit-join window (double-tap).
+ *
+ * First double-tap opens a 60 s permit-join window with slow green
+ * blink feedback.  A second double-tap while the window is open closes
+ * it immediately.  The Zigbee stack is notified via
+ * esp_zigbee_bdb_open_network(); the pj_timer drives the auto-expiry.
+ *
+ * @note Volatile; window does not survive a reboot.
+ */
+static void do_permit_join(void)
+{
+    if (s_permit_join_active) {
+        /* Second double-tap: close early */
+        xTimerStop(s_pj_timer, 0);
+        pj_expired_cb(NULL);
+        return;
+    }
+
+    s_permit_join_active = true;
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    esp_zigbee_bdb_open_network(PERMIT_JOIN_S);
+    esp_zigbee_lock_release();
+    ESP_LOGI(TAG, "Permit-join OPEN (%u s)", PERMIT_JOIN_S);
+
+    start_blink(false, _SOFT_GREEN);
+
+    xTimerChangePeriod(s_pj_timer,
+                       pdMS_TO_TICKS((uint32_t)PERMIT_JOIN_S * 1000U), 0);
+    xTimerReset(s_pj_timer, 0);
+}
+
 static void do_tx_toggle(void)
 {
     s_high_power = !s_high_power;
@@ -170,16 +256,9 @@ static void do_factory_reset(void)
              ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     set_led_locked(_RED);
 
-    /* nvs_flash_erase_partition() does a full partition erase via the flash
-     * driver, bypassing the NVS layer entirely.  This works correctly even
-     * when the partition is uninitialised, corrupted, or the NVS handle
-     * cannot be opened -- which is exactly the failure mode we saw with the
-     * previous nvs_open / nvs_erase_all approach. */
     esp_err_t err = nvs_flash_erase_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs_flash_erase_partition failed: %s", esp_err_to_name(err));
-        /* Proceed to reboot anyway: a failed erase is better than staying
-         * in a broken state. The user can retry. */
     } else {
         ESP_LOGW(TAG, "Partition erased OK -- rebooting");
     }
@@ -191,8 +270,11 @@ static void do_factory_reset(void)
 /* -------------------------------------------------------------------------
  * Blink helpers
  * ---------------------------------------------------------------------- */
-static void start_blink(bool fast)
+static void start_blink(bool fast, uint8_t r, uint8_t g, uint8_t b)
 {
+    s_blink_r     = r;
+    s_blink_g     = g;
+    s_blink_b     = b;
     s_blinking    = true;
     s_blink_state = false;
     TickType_t period = fast ? pdMS_TO_TICKS(BLINK_FAST_MS)
@@ -211,6 +293,18 @@ static void stop_blink(void)
 /* -------------------------------------------------------------------------
  * Public API
  * ---------------------------------------------------------------------- */
+
+/**
+ * @brief Returns true while LED night mode is active.
+ *
+ * Called from router.c before every Zigbee-state LED update to suppress
+ * the update while the user has silenced the LED.
+ */
+bool button_is_night_mode(void)
+{
+    return s_night_mode;
+}
+
 esp_err_t button_init(void)
 {
     gpio_config_t cfg = {
@@ -246,7 +340,14 @@ esp_err_t button_init(void)
                                  pdTRUE, NULL, blink_cb);
     if (!s_blink_timer) return ESP_ERR_NO_MEM;
 
+    s_pj_timer = xTimerCreate("btn_pj",
+                              pdMS_TO_TICKS((uint32_t)PERMIT_JOIN_S * 1000U),
+                              pdFALSE, NULL, pj_expired_cb);
+    if (!s_pj_timer) return ESP_ERR_NO_MEM;
+
     ESP_LOGI(TAG, "BOOT button ready (GPIO%d)", BOOT_BTN_GPIO);
+    ESP_LOGI(TAG, "  1x tap   -> night mode toggle (LED on/off)");
+    ESP_LOGI(TAG, "  2x tap   -> permit-join %u s (2nd tap closes early)", PERMIT_JOIN_S);
     ESP_LOGI(TAG, "  3x tap   -> TX toggle  %d dBm <-> %d dBm",
              ROUTER_TX_POWER_LOW_DBM, ROUTER_TX_POWER_HIGH_DBM);
     ESP_LOGI(TAG, "  Hold 5 s -> factory reset (NVS erase + reboot)");
