@@ -158,7 +158,7 @@ static void pj_expired_cb(TimerHandle_t t)
     s_permit_join_active = false;
     stop_blink();
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    esp_zigbee_bdb_open_network(0);
+    ezb_bdb_open_network(0);   /* close the permit-join window */
     esp_zigbee_lock_release();
     set_led_locked(_GREEN);
     ESP_LOGI(TAG, "Permit-join window closed (timeout)");
@@ -195,7 +195,7 @@ static void do_night_mode_toggle(void)
  * First double-tap opens a 60 s permit-join window with slow green
  * blink feedback.  A second double-tap while the window is open closes
  * it immediately.  The Zigbee stack is notified via
- * esp_zigbee_bdb_open_network(); the pj_timer drives the auto-expiry.
+ * ezb_bdb_open_network(); the pj_timer drives the auto-expiry.
  *
  * @note Volatile; window does not survive a reboot.
  */
@@ -210,7 +210,7 @@ static void do_permit_join(void)
 
     s_permit_join_active = true;
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    esp_zigbee_bdb_open_network(PERMIT_JOIN_S);
+    ezb_bdb_open_network(PERMIT_JOIN_S);   /* open permit-join window */
     esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Permit-join OPEN (%u s)", PERMIT_JOIN_S);
 
