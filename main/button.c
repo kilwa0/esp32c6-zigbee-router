@@ -6,7 +6,7 @@
 #include "esp_ieee802154.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "esp_zigbee_core.h"
+#include "esp_zigbee.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
@@ -168,15 +168,6 @@ static void pj_expired_cb(TimerHandle_t t)
  * Actions
  * ---------------------------------------------------------------------- */
 
-/**
- * @brief Toggle LED night mode (single-tap).
- *
- * In night mode all Zigbee-state LED updates are suppressed by
- * button_is_night_mode() guards in router.c.  Gesture feedback from
- * button.c is NOT suppressed -- the user explicitly triggered it.
- *
- * @note Volatile; reverts to LED-on on reboot.
- */
 static void do_night_mode_toggle(void)
 {
     s_night_mode = !s_night_mode;
@@ -189,20 +180,9 @@ static void do_night_mode_toggle(void)
     }
 }
 
-/**
- * @brief Open or close a permit-join window (double-tap).
- *
- * First double-tap opens a 60 s permit-join window with slow green
- * blink feedback.  A second double-tap while the window is open closes
- * it immediately.  The Zigbee stack is notified via
- * esp_zb_bdb_open_network(); the pj_timer drives the auto-expiry.
- *
- * @note Volatile; window does not survive a reboot.
- */
 static void do_permit_join(void)
 {
     if (s_permit_join_active) {
-        /* Second double-tap: close early */
         xTimerStop(s_pj_timer, 0);
         pj_expired_cb(NULL);
         return;
@@ -210,7 +190,7 @@ static void do_permit_join(void)
 
     s_permit_join_active = true;
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    esp_zb_bdb_open_network(PERMIT_JOIN_S);   /* open permit-join window */
+    esp_zb_bdb_open_network(PERMIT_JOIN_S);
     esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Permit-join OPEN (%u s)", PERMIT_JOIN_S);
 
@@ -295,12 +275,6 @@ static void stop_blink(void)
  * Public API
  * ---------------------------------------------------------------------- */
 
-/**
- * @brief Returns true while LED night mode is active.
- *
- * Called from router.c before every Zigbee-state LED update to suppress
- * the update while the user has silenced the LED.
- */
 bool button_is_night_mode(void)
 {
     return s_night_mode;

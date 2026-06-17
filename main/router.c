@@ -9,7 +9,7 @@
 #include "led_strip_types.h"
 #include "led_strip_rmt.h"
 #include "driver/gpio.h"
-#include "esp_zigbee_core.h"
+#include "esp_zigbee.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
