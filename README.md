@@ -1,5 +1,7 @@
 # esp32c6-zigbee-router
 
+> 🇬🇧 [English version available: README.en.md](README.en.md)
+
 Firmware ESP-IDF para el ESP32-C6 que implementa un **router Zigbee puro** con LED RGB de estado y gestos de control mediante el botón BOOT. Actúa como nodo intermedio en una red Zigbee HA (Home Automation), extendiendo el alcance y reenrutando tráfico entre dispositivos finales y el coordinador.
 
 ---
@@ -12,6 +14,7 @@ Firmware ESP-IDF para el ESP32-C6 que implementa un **router Zigbee puro** con L
 | Flash | 16 MB |
 | LED de estado | LED RGB direccionable (WS2812 o compatible) en GPIO 8 vía RMT |
 | Framework | ESP-IDF ≥ 6.2.0 |
+| SDK Zigbee | `esp-zigbee-lib` ≥ 2.0.0 (API `ezb_*`) |
 
 ---
 
@@ -88,15 +91,17 @@ Firmware ESP-IDF para el ESP32-C6 que implementa un **router Zigbee puro** con L
 ## Requisitos de compilación
 
 - [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/) ≥ 6.2.0 con soporte ESP32-C6
-- Componente `ezbee` (wrapper de alto nivel sobre `esp-zigbee-sdk`)
-- Componente `alarm_timer` (timers diferidos no bloqueantes)
-- Componente `led_strip` (driver WS2812 vía RMT)
+- `esp-zigbee-lib` ≥ 2.0.0 — SDK Zigbee de alto nivel con API `ezb_*`
+- `alarm_timer` — timers diferidos no bloqueantes (obtenido automáticamente desde el repositorio `esp-zigbee-sdk`)
+- `led_strip` ≥ 3.0.0 — driver WS2812 vía RMT
 
 Instalar las dependencias declaradas en `main/idf_component.yml`:
 
 ```bash
 idf.py reconfigure
 ```
+
+> **Nota de migración**: si compilabas con `esp-zigbee-sdk` 1.x, necesitarás borrar el directorio `build/` y la caché de componentes antes de recompilar, ya que los headers y símbolos han cambiado por completo.
 
 ---
 
@@ -183,21 +188,19 @@ app_main()
 
 ### Máquina de estados (señales BDB)
 
-El router gestiona su ciclo de vida en red mediante el handler `esp_zigbee_app_signal_handler`. Los estados principales son:
-
 | Señal | Acción | LED |
 |-------|--------|-----|
-| `ZDO_SIGNAL_SKIP_STARTUP` | Lanza `BDB_MODE_INITIALIZATION` | 🔴 Rojo |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + factory-new | Lanza `BDB_MODE_NETWORK_STEERING` | 🟡 Ámbar |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + rejoin | Device Announce inmediato | 🟢 Verde |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` fallo | Reintento tras `ROUTER_BDB_INIT_RETRY_MS` | 🔴 Rojo |
-| `BDB_SIGNAL_STEERING` OK | Unido a la red, envía Device Announce (×2: 3 s y 8 s) | 🟢 Verde |
-| `BDB_SIGNAL_STEERING` `NO_NETWORK` | Reintento tras `ROUTER_STEERING_RETRY_MS`, alterna INIT/STEERING | 🟡 Ámbar |
-| `BDB_SIGNAL_STEERING` `NOT_PERMITTED` / `TARGET_FAILURE` | Reintento programado | 🟡 Ámbar |
-| `BDB_SIGNAL_STEERING` `TCLK_EX_FAILURE` | Log de advertencia, reintento | — |
-| `NWK_SIGNAL_PERMIT_JOIN_STATUS` activo | Ventana de emparejamiento abierta en el PAN | 🔵 Azul |
-| `NWK_SIGNAL_PERMIT_JOIN_STATUS` cerrado | Ventana de emparejamiento cerrada | 🟢 Verde |
-| `ZDO_SIGNAL_LEAVE` | Dispositivo eliminado de la red | 🔴 Rojo |
+| `EZB_ZDO_SIGNAL_SKIP_STARTUP` | Lanza `EZB_BDB_MODE_INITIALIZATION` | 🔴 Rojo |
+| `EZB_BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + factory-new | Lanza `EZB_BDB_MODE_NETWORK_STEERING` | 🟡 Ámbar |
+| `EZB_BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + rejoin | Device Announce inmediato | 🟢 Verde |
+| `EZB_BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` fallo | Reintento tras `ROUTER_BDB_INIT_RETRY_MS` | 🔴 Rojo |
+| `EZB_BDB_SIGNAL_STEERING` OK | Unido a la red, envía Device Announce (×2: 3 s y 8 s) | 🟢 Verde |
+| `EZB_BDB_SIGNAL_STEERING` `NO_NETWORK` | Reintento, alterna INIT/STEERING | 🟡 Ámbar |
+| `EZB_BDB_SIGNAL_STEERING` `NOT_PERMITTED` / `TARGET_FAILURE` | Reintento programado | 🟡 Ámbar |
+| `EZB_BDB_SIGNAL_STEERING` `TCLK_EX_FAILURE` | Log de advertencia, reintento | — |
+| `EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS` activo | Ventana de emparejamiento abierta en el PAN | 🔵 Azul |
+| `EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS` cerrado | Ventana de emparejamiento cerrada | 🟢 Verde |
+| `EZB_ZDO_SIGNAL_LEAVE` | Dispositivo eliminado de la red | 🔴 Rojo |
 
 ### Lógica de reintento de steering
 
@@ -214,7 +217,7 @@ La variable `retry_with_initialization` controla la alternancia. Un reintento so
 - **Trust Center Link Key**: clave estándar ZigBee Alliance HA (`ZigBeeAlliance09`)
 - **TCLK exchange**: obligatorio (`ezb_secur_set_tclk_exchange_required(true)`)
 - **LQI mínimo para join**: 0 (sin filtrado, máxima compatibilidad de alcance)
-- **Install code policy**: habilitada (`install_code_policy = true`) — los nuevos dispositivos deben presentar un install code válido antes de recibir una link key única del coordinador.
+- **Install code policy**: habilitada (`install_code_policy = true`)
 
 > ⚠️ El TC Link Key estándar es público y bien conocido. Para redes de producción con requisitos de seguridad elevados, considerar una política de install codes completa.
 
@@ -222,16 +225,12 @@ La variable `retry_with_initialization` controla la alternancia. Un reintento so
 
 ## Botón BOOT (GPIO9)
 
-El botón BOOT del DevKitC-1 es un GPIO de propósito general una vez que el firmware está en ejecución. El módulo `button.c` instala una ISR en `ANYEDGE` y gestiona tres software timers FreeRTOS para detectar los siguientes gestos:
-
 | Gesto | Umbral | Acción | Feedback LED |
 |-------|--------|--------|-------------|
 | Triple toque | < 500 ms entre pulsaciones | Toggle potencia TX: 8 dBm ↔ 20 dBm | 3× rojo brillante (boost) / 3× azul suave (normal) |
 | Mantener 5 s | GPIO en LOW durante 5 s | Factory reset (borrado NVS Zigbee) + reboot | Magenta parpadeante rápido → rojo fijo → reboot |
 
-> **Nota sobre el reboot**: el DevKitC-1 dispone de un botón **RST** dedicado en la placa. El gesto de reboot por software no está implementado — usar el botón físico.
-
-> **Nota sobre el factory reset**: el borrado se realiza con `nvs_flash_erase_partition()` directamente sobre el driver de flash, sin pasar por la capa NVS. Esto garantiza el borrado correcto incluso si la partición está no inicializada o corrupta. El IEEE address (EUI-64) del chip **no cambia** — está grabado en efuses de fábrica.
+> **Nota sobre el factory reset**: el borrado se realiza con `nvs_flash_erase_partition()` directamente sobre el driver de flash. El IEEE address (EUI-64) del chip **no cambia** — está grabado en efuses de fábrica.
 
 ---
 
@@ -240,9 +239,9 @@ El botón BOOT del DevKitC-1 es un GPIO de propósito general una vez que el fir
 | Modo | Valor | Cuándo usar |
 |------|-------|-------------|
 | Normal (arranque por defecto) | **8 dBm** | Operación diaria en red doméstica. Balance óptimo rango/consumo/interferencia. |
-| Boost (triple-tap) | **20 dBm** | Nodo lejano que no alcanza la red, troubleshooting puntual. Máximo hardware del ESP32-C6 / límite CE ETSI EN 300 328. |
+| Boost (triple-tap) | **20 dBm** | Nodo lejano que no alcanza la red, troubleshooting puntual. |
 
-El modo boost es **volátil**: revierte a 8 dBm en el siguiente reboot. El ciclo del triple-tap es: `8 dBm → 20 dBm → 8 dBm → ...`
+El modo boost es **volátil**: revierte a 8 dBm en el siguiente reboot.
 
 ---
 
@@ -265,13 +264,6 @@ El modo boost es **volátil**: revierte a 8 dBm en el siguiente reboot. El ciclo
 | 🔵 Azul suave | 0 | 0 | 64 | Confirmación TX normal (8 dBm activo) |
 | 🟣 Magenta | 255 | 0 | 255 | Acción destructiva en curso (factory reset) |
 
-**Semántica de colores:**
-- 🔴 **Rojo** — error crítico o ausencia total de red (dispositivo no operativo) / TX en modo boost
-- 🟡 **Ámbar** — advertencia / en progreso: el dispositivo está activo y reintentando
-- 🟢 **Verde** — estado nominal: el router está integrado en la red y enrutando tráfico
-- 🔵 **Azul** — informativo: ventana de emparejamiento del PAN abierta / TX en modo normal
-- 🟣 **Magenta** — acción destructiva en progreso (parpadeo); no interrumpir
-
 ---
 
 ## Endpoint Zigbee registrado
@@ -283,8 +275,6 @@ El modo boost es **volátil**: revierte a 8 dBm en el siguiente reboot. El ciclo
 | Device ID | Range Extender (`0x0008`) |
 | Power Source (cluster Basic) | `SINGLE_PHASE_MAINS` (`0x01`) |
 | Clusters servidor | Basic (con `ManufacturerName` y `ModelIdentifier`) |
-
-> El endpoint registra únicamente el cluster Basic con los atributos de identificación obligatorios. No incluye clusters de aplicación (On/Off, etc.) ya que el router actúa exclusivamente como nodo de infraestructura.
 
 ---
 
@@ -300,10 +290,9 @@ Este proyecto sigue [Semantic Versioning](https://semver.org/lang/es/). El histo
 
 | Versión | Fecha | Resumen |
 |---------|-------|---------|
+| **v3.0.0** | 2026-06-17 | Migración a `esp-zigbee-lib` ≥ 2.0.0 (API `ezb_*`). Breaking change de compilación. |
 | **v2.0.0** | 2026-06-16 | Botón BOOT: triple-tap toggle TX, hold 5 s factory reset. Corrección borrado NVS. |
 | **v1.0.0** | 2026-06-15 | Router Zigbee funcional, LED RGB, steering retry con alternancia INIT/STEERING. |
-
-> El seguimiento de **PATCH** comienza a partir de la próxima release. Las versiones anteriores no reportaban la versión al hub y los bugfixes no se versionaban de forma independiente.
 
 ---
 
@@ -311,16 +300,15 @@ Este proyecto sigue [Semantic Versioning](https://semver.org/lang/es/). El histo
 
 | Síntoma | Causa probable | Acción |
 |---------|----------------|--------|
+| Error de compilación `ezb_*` undeclared | SDK 1.x instalado | Borrar `build/` y componentes, ejecutar `idf.py reconfigure` con SDK ≥ 2.0.0 |
 | LED 🟡 ámbar constante | Coordinador sin permit join abierto o fuera de rango | Abrir permit join en el coordinador y verificar distancia |
-| 🟡 ámbar alternando con 🔴 rojo | Ciclo STEERING → INITIALIZATION en progreso | Normal si el coordinador no está disponible; esperar o abrir permit join |
+| 🟡 ámbar alternando con 🔴 rojo | Ciclo STEERING → INITIALIZATION en progreso | Normal si el coordinador no está disponible |
 | `TCLK_EX_FAILURE` en logs | Política de seguridad del coordinador incompatible | Verificar que el coordinador acepta el TC Link Key estándar |
 | `NOT_PERMITTED` en logs | Permit join cerrado en el coordinador | Abrir permit join (60–254 s) |
 | Reset por WDT durante steering | Stack insuficiente en la tarea Zigbee | Verificar `ZIGBEE_MAIN_TASK_STACK_SIZE` ≥ 10240 bytes |
-| Dispositivo no visible en la UI del coordinador | `power_source` incorrecto en cluster Basic | Verificar `power_source = SINGLE_PHASE_MAINS` |
-| Router no escanea todos los canales | Máscara primaria demasiado restrictiva | Revisar `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK`; el fallback secundario escaneará 11–26 |
 | Triple-tap no responde | Pulsaciones demasiado lentas | Mantener menos de 500 ms entre cada pulsación |
-| Factory reset no borra la red | Error en `nvs_flash_erase_partition` | Revisar log serie — el error se registra con `ESP_LOGE`; comprobar nombre de partición en `partitions.csv` |
-| TX power no cambia tras triple-tap | `esp_ieee802154_set_txpower` falla | Verificar en log: `set_txpower(%d) failed` — puede indicar conflicto con el stack Zigbee |
+| Factory reset no borra la red | Error en `nvs_flash_erase_partition` | Revisar log serie; comprobar nombre de partición en `partitions.csv` |
+| TX power no cambia tras triple-tap | `esp_ieee802154_set_txpower` falla | Verificar en log: `set_txpower(%d) failed` |
 
 ---
 
@@ -328,14 +316,12 @@ Este proyecto sigue [Semantic Versioning](https://semver.org/lang/es/). El histo
 
 El código fuente original de este proyecto está publicado bajo **CC0-1.0** (dominio público). Ver cabeceras SPDX en los ficheros fuente.
 
-Sin embargo, este firmware **enlaza y depende** de las siguientes bibliotecas de Espressif, que tienen sus propias licencias:
+Este firmware **enlaza y depende** de las siguientes bibliotecas de Espressif:
 
 | Dependencia | Licencia | Notas |
 |-------------|----------|-------|
 | [ESP-IDF](https://github.com/espressif/esp-idf) | Apache-2.0 | Framework base |
 | [esp-zigbee-sdk](https://github.com/espressif/esp-zigbee-sdk) | Apache-2.0 | SDK Zigbee de alto nivel |
 | [esp-zboss-lib](https://github.com/espressif/esp-zboss-lib) | [Licencia Espressif](https://github.com/espressif/esp-zboss-lib/blob/master/LICENSE) | Stack ZBOSS en binario; licencia separada |
-
-> ⚠️ Cualquier redistribución o producto derivado debe cumplir con los términos de **todas** las licencias anteriores, incluyendo los requisitos de atribución de Apache-2.0 y las condiciones específicas de `esp-zboss-lib`.
 
 Para contribuir, ver [CONTRIBUTING.md](CONTRIBUTING.md).

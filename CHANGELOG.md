@@ -7,7 +7,7 @@ Versionado según [Semantic Versioning](https://semver.org/lang/es/):
 
 | Componente | Cuándo incrementar |
 |---|---|
-| **MAJOR** | Cambio de comportamiento observable externamente: gestos nuevos, semántica del LED, parámetros Zigbee |
+| **MAJOR** | Cambio de comportamiento observable externamente: gestos nuevos, semántica del LED, parámetros Zigbee, cambio de API de dependencias |
 | **MINOR** | Nueva funcionalidad no disruptiva: nuevo gesto, nuevo endpoint, nueva métrica |
 | **PATCH** | Bugfix puro sin cambio de comportamiento observable |
 
@@ -17,8 +17,24 @@ Versionado según [Semantic Versioning](https://semver.org/lang/es/):
 
 ## [Sin publicar]
 
-### Añadido
-- Reporte de versión de firmware al hub Zigbee mediante el atributo `SWBuildID` del cluster Basic (pendiente de implementación).
+### Pendiente
+- Reporte de versión de firmware al hub Zigbee mediante el atributo `SWBuildID` del cluster Basic.
+
+---
+
+## [3.0.0] — 2026-06-17
+
+### Cambiado (BREAKING)
+- **Migración completa a `esp-zigbee-sdk` ≥ 2.x (API `ezb_*`)**: todos los símbolos del stack Zigbee han migrado del prefijo `esp_zb_*` al nuevo prefijo `ezb_*`. Los headers incluidos son ahora `esp_zigbee.h`, `ezbee/af.h`, `ezbee/secur.h`, `ezbee/zcl/cluster/basic_desc.h` y `ezbee/zdo/zdo_dev_srv_disc.h`. La dependencia en `idf_component.yml` pasa de `espressif/esp-zigbee-sdk` a `espressif/esp-zigbee-lib >=2.0.0`.
+- La función de registro de endpoint reemplaza la API builder clásica (`esp_zb_cluster_list_*`, `esp_zb_ep_list_*`) por el nuevo flujo basado en descriptores: `ezb_af_create_device_desc()` → `ezb_af_create_endpoint_desc()` → `ezb_zcl_basic_create_cluster_desc()` → `ezb_af_device_desc_register()`.
+- Las señales BDB y ZDO se leen con `ezb_app_signal_get_type()` y `ezb_app_signal_get_params()` en lugar de la macro `ESP_ZIGBEE_ERROR_CHECK`.
+- Las funciones de canal, seguridad y configuración del router usan los nuevos símbolos: `ezb_bdb_set_primary_channel_set()`, `ezb_bdb_set_secondary_channel_set()`, `ezb_secur_set_global_link_key()`, `ezb_secur_set_tclk_exchange_required()`, `ezb_aps_secur_enable_distributed_security()`.
+- `router.h`: macro `ESP_ZIGBEE_ROUTER_CONFIG()` actualizada con `ezb_nwk_device_type_t` (`EZB_NWK_DEVICE_TYPE_ROUTER`) y tipo `ezb_bdb_comm_mode_t` para los modos BDB.
+- `idf_component.yml`: `alarm_timer` obtenido via `git` + `path` desde `espressif/esp-zigbee-sdk` (no publicado en el registro de componentes); `led_strip` fijado en `^3.0.0`.
+
+### Corregido
+- `EZB_ZCL_ATTR_BASIC_SW_BUILD_ID` → `EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID` (nombre correcto del símbolo en SDK 2.x).
+- `SET_LED_IF_AWAKE(LED_RED)` → valores RGB explícitos por triplet: el preprocesador C no expande argumentos de macro con comas en múltiples parámetros.
 
 ---
 
@@ -55,6 +71,7 @@ Versionado según [Semantic Versioning](https://semver.org/lang/es/):
 - Device Announce doble tras join exitoso (3 s y 8 s) para maximizar visibilidad en el coordinador.
 - Wrapper de alto nivel `ezbee` sobre `esp-zigbee-sdk`.
 
-[Sin publicar]: https://github.com/kilwa0/esp32c6-zigbee-router/compare/v2.0.0...HEAD
+[Sin publicar]: https://github.com/kilwa0/esp32c6-zigbee-router/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/kilwa0/esp32c6-zigbee-router/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/kilwa0/esp32c6-zigbee-router/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/kilwa0/esp32c6-zigbee-router/releases/tag/v1.0.0
