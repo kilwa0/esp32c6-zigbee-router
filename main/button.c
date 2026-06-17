@@ -6,7 +6,7 @@
 #include "esp_ieee802154.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "esp_zigbee.h"
+#include "esp_zigbee_core.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
@@ -158,7 +158,7 @@ static void pj_expired_cb(TimerHandle_t t)
     s_permit_join_active = false;
     stop_blink();
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    ezb_bdb_open_network(0);   /* close the permit-join window */
+    esp_zb_bdb_open_network(0);   /* close the permit-join window */
     esp_zigbee_lock_release();
     set_led_locked(_GREEN);
     ESP_LOGI(TAG, "Permit-join window closed (timeout)");
@@ -195,7 +195,7 @@ static void do_night_mode_toggle(void)
  * First double-tap opens a 60 s permit-join window with slow green
  * blink feedback.  A second double-tap while the window is open closes
  * it immediately.  The Zigbee stack is notified via
- * ezb_bdb_open_network(); the pj_timer drives the auto-expiry.
+ * esp_zb_bdb_open_network(); the pj_timer drives the auto-expiry.
  *
  * @note Volatile; window does not survive a reboot.
  */
@@ -210,7 +210,7 @@ static void do_permit_join(void)
 
     s_permit_join_active = true;
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    ezb_bdb_open_network(PERMIT_JOIN_S);   /* open permit-join window */
+    esp_zb_bdb_open_network(PERMIT_JOIN_S);   /* open permit-join window */
     esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Permit-join OPEN (%u s)", PERMIT_JOIN_S);
 
@@ -258,7 +258,8 @@ static void do_factory_reset(void)
 
     esp_err_t err = nvs_flash_erase_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_flash_erase_partition failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "nvs_flash_erase_partition failed: %s",
+                 esp_err_to_name(err));
     } else {
         ESP_LOGW(TAG, "Partition erased OK -- rebooting");
     }
@@ -347,7 +348,8 @@ esp_err_t button_init(void)
 
     ESP_LOGI(TAG, "BOOT button ready (GPIO%d)", BOOT_BTN_GPIO);
     ESP_LOGI(TAG, "  1x tap   -> night mode toggle (LED on/off)");
-    ESP_LOGI(TAG, "  2x tap   -> permit-join %u s (2nd tap closes early)", PERMIT_JOIN_S);
+    ESP_LOGI(TAG, "  2x tap   -> permit-join %u s (2nd tap closes early)",
+             PERMIT_JOIN_S);
     ESP_LOGI(TAG, "  3x tap   -> TX toggle  %d dBm <-> %d dBm",
              ROUTER_TX_POWER_LOW_DBM, ROUTER_TX_POWER_HIGH_DBM);
     ESP_LOGI(TAG, "  Hold 5 s -> factory reset (NVS erase + reboot)");

@@ -32,7 +32,6 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 #define ROUTER_STEERING_RETRY_MS      5000U
 
 #define ROUTER_MAX_CHILDREN           6U
-#define ROUTER_JOIN_OPEN_DURATION_S   255U
 
 /* RF transmit power in dBm.
  *
@@ -51,13 +50,17 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 
 #define ZIGBEE_MAIN_TASK_STACK_SIZE   (10240U)
 
-#define ESP_ZIGBEE_ROUTER_CONFIG()                        \
-    {                                                     \
-        .device_type = EZB_NWK_DEVICE_TYPE_ROUTER,        \
-        .install_code_policy = true,                      \
-        .zczr_config = {                                  \
-            .max_children = ROUTER_MAX_CHILDREN,          \
-        },                                                \
+/*
+ * ESP_ZIGBEE_DEFAULT_CONFIG uses the official esp_zb_cfg_t / esp_zb_platform_config_t
+ * structures from esp_zigbee_core.h (no ezbee types).
+ */
+#define ESP_ZIGBEE_ROUTER_CONFIG()                              \
+    {                                                           \
+        .esp_zb_role = ESP_ZB_DEVICE_TYPE_ROUTER,               \
+        .install_code_policy = false,                           \
+        .nwk_cfg.zczr_cfg = {                                   \
+            .max_children = ROUTER_MAX_CHILDREN,                \
+        },                                                      \
     }
 
 #if CONFIG_SOC_IEEE802154_SUPPORTED
@@ -65,15 +68,15 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
     {                                                                \
         .storage_partition_name = ESP_ZIGBEE_STORAGE_PARTITION_NAME, \
         .radio_config = {                                            \
-            .radio_mode = ESP_ZIGBEE_RADIO_MODE_NATIVE,              \
+            .radio_mode = ZB_RADIO_MODE_NATIVE,                      \
         },                                                           \
     }
 #else
 #warning "This firmware requires IEEE 802.15.4 support."
 #endif
 
-#define ESP_ZIGBEE_DEFAULT_CONFIG()                         \
-    {                                                       \
-        .device_config = ESP_ZIGBEE_ROUTER_CONFIG(),        \
-        .platform_config = ESP_ZIGBEE_PLATFORM_CONFIG(),    \
-    };
+#define ESP_ZIGBEE_DEFAULT_CONFIG()                          \
+    {                                                        \
+        .device_config   = ESP_ZIGBEE_ROUTER_CONFIG(),       \
+        .platform_config = ESP_ZIGBEE_PLATFORM_CONFIG(),     \
+    }
