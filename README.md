@@ -1,21 +1,56 @@
 # esp32c6-zigbee-router
 
-Firmware ESP-IDF para el ESP32-C6 que implementa un **router Zigbee puro** con LED RGB de estado y gestos de control mediante el botón BOOT. Actúa como nodo intermedio en una red Zigbee HA (Home Automation), extendiendo el alcance y reenrutando tráfico entre dispositivos finales y el coordinador.
+> 🇪🇸 [Versión en español disponible: Docs/LNG/ES/README.md](Docs/LNG/ES/README.md)
+
+ESP-IDF firmware for the ESP32-C6 implementing a **pure Zigbee router** with an RGB status LED and button gestures via the BOOT button. Acts as an intermediate node in a Zigbee HA (Home Automation) network, extending range and re-routing traffic between end devices and the coordinator.
 
 ---
 
-## Hardware soportado
+## Supported Hardware
 
-| Componente | Especificación |
+| Component | Specification |
 |-----------|----------------|
-| SoC | ESP32-C6 (IEEE 802.15.4 nativo) |
+| SoC | ESP32-C6 (native IEEE 802.15.4) |
 | Flash | 16 MB |
-| LED de estado | LED RGB direccionable (WS2812 o compatible) en GPIO 8 vía RMT |
+| Status LED | Addressable RGB LED (WS2812 or compatible) on GPIO 8 via RMT |
 | Framework | ESP-IDF ≥ 6.2.0 |
+| Zigbee SDK | `esp-zigbee-lib` ≥ 2.0.0 (`ezb_*` API) |
 
 ---
 
-## Pinout — ESP32-C6-DevKitC-1 (módulo WROOM-1 N6)
+## Build Requirements
+
+- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/) ≥ 6.2.0 with ESP32-C6 support
+- `esp-zigbee-lib` ≥ 2.0.0 — high-level Zigbee SDK with `ezb_*` API
+- `alarm_timer` — non-blocking deferred timers (fetched automatically from the `esp-zigbee-sdk` repo)
+- `led_strip` ≥ 3.0.0 — WS2812 driver via RMT
+
+Install all dependencies declared in `main/idf_component.yml`:
+
+```bash
+idf.py reconfigure
+```
+
+> **Migration note**: if you were building with `esp-zigbee-sdk` 1.x, delete the `build/` directory and the component cache before rebuilding — headers and symbols have changed completely.
+
+---
+
+## Build and Flash
+
+```bash
+# Set target
+idf.py set-target esp32c6
+
+# Build
+idf.py build
+
+# Flash and monitor
+idf.py flash monitor
+```
+
+---
+
+## GPIO Pinout — ESP32-C6-DevKitC-1 (WROOM-1 N6 module)
 
 ```
                     ESP32-C6-DevKitC-1
@@ -45,297 +80,261 @@ Firmware ESP-IDF para el ESP32-C6 que implementa un **router Zigbee puro** con L
                   '-------------------'
 ```
 
-### Tabla de funciones GPIO
+### GPIO Function Table
 
-| GPIO | Pin | Función principal | Funciones alternativas | Notas |
-|------|-----|-------------------|------------------------|-------|
-| IO0  |  7  | GPIO              | XTAL_32K_P, LP_GPIO0, ADC1_CH0 | Pin de strapping |
-| IO1  |  8  | GPIO              | XTAL_32K_N, LP_GPIO1, ADC1_CH1 | |
-| IO2  | 12  | SPI FSPIQ         | LP_GPIO2, ADC1_CH2 | |
-| IO3  | 13  | GPIO              | LP_GPIO3, ADC1_CH3 | |
-| IO4  |  3  | JTAG MTMS / I2C SDA | LP_GPIO4, LP_UART_RXD, ADC1_CH4, FSPIHD | Pin de strapping |
-| IO5  |  4  | JTAG MTDI / I2C SCL | LP_GPIO5, LP_UART_TXD, ADC1_CH5, FSPIWP | Pin de strapping |
-| IO6  |  5  | JTAG MTCK         | LP_GPIO6, LP_I2C_SDA, ADC1_CH6, FSPICLK | |
-| IO7  |  6  | JTAG MTDO         | LP_GPIO7, LP_I2C_SCL, FSPID | |
-| **IO8**  |  **9**  | **LED WS2812 (este fw)** | GPIO | **Pin de strapping — usado por este firmware** |
-| **IO9**  | 24  | **Botón BOOT**    | ADC2_CH1 | Pin de strapping — botón BOOT, libre en runtime |
-| IO10 | 10  | GPIO              | — | |
-| IO11 | 11  | GPIO / SPI Flash  | — | Puede estar reservado para flash interno |
-| IO12 | 26  | USB JTAG D−       | — | USB nativo (no usar si USB CDC está activo) |
-| IO13 | 27  | USB JTAG D+       | — | USB nativo (no usar si USB CDC está activo) |
-| IO15 | 28  | GPIO              | — | Pin de strapping |
-| IO16 | 17  | GPIO              | — | |
-| IO17 | 23  | UART0 TX          | FSPICS0 | Conectado al chip USB–UART (CH343) |
-| IO18 | 22  | UART0 RX          | SDIO_CMD, FSPICS2 | Conectado al chip USB–UART (CH343) |
-| IO19 | 30  | USB D−            | SDIO_CLK, FSPICS3 | USB nativo |
-| IO20 | 31  | USB D+            | SDIO_DATA0, FSPICS4 | USB nativo |
-| IO21 | 32  | GPIO / SPI CS     | SDIO_DATA1, FSPICS5 | |
-| IO22 | 33  | GPIO / SPI MOSI   | SDIO_DATA2 | |
-| IO23 | 34  | GPIO / SPI MISO   | SDIO_DATA3 | |
+| GPIO | Pin | Primary function | Alternate functions | Notes |
+|------|-----|-----------------|---------------------|-------|
+| IO0  |  7  | GPIO | XTAL_32K_P, LP_GPIO0, ADC1_CH0 | Strapping pin |
+| IO1  |  8  | GPIO | XTAL_32K_N, LP_GPIO1, ADC1_CH1 | |
+| IO2  | 12  | SPI FSPIQ | LP_GPIO2, ADC1_CH2 | |
+| IO3  | 13  | GPIO | LP_GPIO3, ADC1_CH3 | |
+| IO4  |  3  | JTAG MTMS / I2C SDA | LP_GPIO4, LP_UART_RXD, ADC1_CH4, FSPIHD | Strapping pin |
+| IO5  |  4  | JTAG MTDI / I2C SCL | LP_GPIO5, LP_UART_TXD, ADC1_CH5, FSPIWP | Strapping pin |
+| IO6  |  5  | JTAG MTCK | LP_GPIO6, LP_I2C_SDA, ADC1_CH6, FSPICLK | |
+| IO7  |  6  | JTAG MTDO | LP_GPIO7, LP_I2C_SCL, FSPID | |
+| **IO8** | **9** | **WS2812 LED (this fw)** | GPIO | **Strapping pin — used by this firmware** |
+| **IO9** | 24 | **BOOT button** | ADC2_CH1 | Strapping pin — free as GPIO at runtime |
+| IO10 | 10 | GPIO | — | |
+| IO11 | 11 | GPIO / SPI Flash | — | May be reserved for internal flash |
+| IO12 | 26 | USB JTAG D− | — | Native USB (avoid if USB CDC active) |
+| IO13 | 27 | USB JTAG D+ | — | Native USB (avoid if USB CDC active) |
+| IO15 | 28 | GPIO | — | Strapping pin |
+| IO16 | 17 | GPIO | — | |
+| IO17 | 23 | UART0 TX | FSPICS0 | Connected to USB–UART chip (CH343) |
+| IO18 | 22 | UART0 RX | SDIO_CMD, FSPICS2 | Connected to USB–UART chip (CH343) |
+| IO19 | 30 | USB D− | SDIO_CLK, FSPICS3 | Native USB |
+| IO20 | 31 | USB D+ | SDIO_DATA0, FSPICS4 | Native USB |
+| IO21 | 32 | GPIO / SPI CS | SDIO_DATA1, FSPICS5 | |
+| IO22 | 33 | GPIO / SPI MOSI | SDIO_DATA2 | |
+| IO23 | 34 | GPIO / SPI MISO | SDIO_DATA3 | |
 
-### Notas de uso
+### Usage Notes
 
-- ⚠️ **Pines de strapping** (IO0, IO4, IO5, IO8, IO9, IO15): el nivel lógico en el momento del reset determina el modo de arranque. Dejar sin conectar o añadir resistencia pull-up/pull-down apropiada.
-- 🔴 **IO8** está conectado al **LED WS2812 de la placa** en el DevKitC-1 y es el pin utilizado por este firmware para el LED de estado.
-- 🟡 **IO4–IO7**: pines JTAG. Disponibles como GPIO cuando no se usa un depurador hardware.
-- 🔵 **IO12–IO13, IO19–IO20**: pines del bus USB nativo del SoC. Reservados si se usa USB CDC/JTAG.
-- ⚪ **IO17/IO18**: conectados internamente al chip USB–UART (CH343). Son los pines de la consola serie (`idf.py monitor`).
-- 🟢 **IO11**: puede estar reservado para flash interno en variantes OSPI. Consultar el esquemático de la placa específica.
-- 🔘 **IO9 (BOOT)**: durante el arranque determina el modo de flash (HIGH = boot normal). Una vez que el firmware está en ejecución, es un GPIO de propósito general utilizado por el módulo `button.c` para los gestos de control.
-
----
-
-## Requisitos de compilación
-
-- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/) ≥ 6.2.0 con soporte ESP32-C6
-- Componente `ezbee` (wrapper de alto nivel sobre `esp-zigbee-sdk`)
-- Componente `alarm_timer` (timers diferidos no bloqueantes)
-- Componente `led_strip` (driver WS2812 vía RMT)
-
-Instalar las dependencias declaradas en `main/idf_component.yml`:
-
-```bash
-idf.py reconfigure
-```
+- ⚠️ **Strapping pins** (IO0, IO4, IO5, IO8, IO9, IO15): the logic level at reset determines boot mode. Leave unconnected or add appropriate pull-up/pull-down resistors.
+- 🔴 **IO8** is connected to the **onboard WS2812 LED** on the DevKitC-1 and is the pin used by this firmware for the status LED.
+- 🟡 **IO4–IO7**: JTAG pins. Available as GPIO when no hardware debugger is attached.
+- 🔵 **IO12–IO13, IO19–IO20**: native USB bus pins. Reserved if USB CDC/JTAG is in use.
+- ⚪ **IO17/IO18**: internally connected to the USB–UART chip (CH343). These are the serial console pins (`idf.py monitor`).
+- 🟢 **IO11**: may be reserved for internal flash in OSPI variants. Check the specific board schematic.
+- 🔘 **IO9 (BOOT)**: at boot determines flash mode (HIGH = normal boot). Once firmware is running, it is a general-purpose GPIO used by `button.c` for control gestures.
 
 ---
 
-## Compilar y flashear
+## Configuration
 
-```bash
-# Establecer target
-idf.py set-target esp32c6
+The project uses `sdkconfig.defaults` and `sdkconfig.defaults.esp32c6` with pre-configured values. Editable parameters via `Kconfig` are in `main/Kconfig.projbuild`:
 
-# Compilar
-idf.py build
+| Kconfig parameter | Description | Default |
+|-------------------|-------------|---------|
+| `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK` | Primary channels: 15, 20, 25 (minimum Wi-Fi 2.4 GHz overlap in the EU) | `0x02108000` |
+| `ESP_ZIGBEE_SECONDARY_CHANNEL_MASK` | Secondary channels: full 11–26 scan (fallback) | `0x07FFF800` |
 
-# Flashear y monitorizar
-idf.py flash monitor
-```
-
----
-
-## Configuración
-
-El proyecto utiliza `sdkconfig.defaults` y `sdkconfig.defaults.esp32c6` con valores preconfigurados. Los parámetros editables vía `Kconfig` están en `main/Kconfig.projbuild`:
-
-| Parámetro Kconfig | Descripción | Valor por defecto |
-|-------------------|-------------|-------------------|
-| `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK` | Canales primarios: 15, 20, 25 (mínimo solapamiento con Wi-Fi 2.4 GHz en la UE) | `0x02108000` |
-| `ESP_ZIGBEE_SECONDARY_CHANNEL_MASK` | Canales secundarios: escaneo completo 11–26 (fallback) | `0x07FFF800` |
-
-Para personalizar el nombre del fabricante y modelo del dispositivo, editar `main/router.h`:
+To customize manufacturer name and model identifier, edit `main/router.h`:
 
 ```c
 #define ESP_MANUFACTURER_NAME "\x09""ESPRESSIF"
 #define ESP_MODEL_IDENTIFIER  "\x08""ESP32-C6"
 ```
 
-> **Nota**: El prefijo `\xNN` es la longitud de la cadena en formato ZCL (Pascal string). Actualizar el byte de longitud si se modifica el texto.
+> **Note**: The `\xNN` prefix is the string length in ZCL format (Pascal string). Update the length byte if you modify the text.
 
-### Constantes de tiempo, stack y potencia RF
+### Timing, Stack, and RF Power Constants
 
-Definidas en `main/router.h`:
+Defined in `main/router.h`:
 
-| Constante | Valor por defecto | Descripción |
-|----------|-------------------|-------------|
-| `ROUTER_BDB_INIT_RETRY_MS` | `2000` ms | Tiempo entre reintentos de inicialización BDB |
-| `ROUTER_STEERING_RETRY_MS` | `5000` ms | Tiempo entre reintentos de network steering |
-| `ZIGBEE_MAIN_TASK_STACK_SIZE` | `10240` bytes | Tamaño del stack de la tarea principal Zigbee |
-| `ROUTER_TX_POWER_LOW_DBM` | `8` dBm | Potencia RF de trabajo normal |
-| `ROUTER_TX_POWER_HIGH_DBM` | `20` dBm | Potencia RF en modo boost (triple-tap) |
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `ROUTER_BDB_INIT_RETRY_MS` | `2000` ms | Delay between BDB initialization retries |
+| `ROUTER_STEERING_RETRY_MS` | `5000` ms | Delay between network steering retries |
+| `ZIGBEE_MAIN_TASK_STACK_SIZE` | `10240` bytes | Zigbee main task stack size |
+| `ROUTER_TX_POWER_LOW_DBM` | `8` dBm | Normal RF transmit power |
+| `ROUTER_TX_POWER_HIGH_DBM` | `20` dBm | Boost RF transmit power (triple-tap) |
 
 ---
 
-## Arquitectura del firmware
+## Firmware Architecture
 
-### Ficheros principales
+### Main Files
 
-| Fichero | Descripción |
-|---------|-------------|
-| `main/router.c` | Lógica principal: inicialización, máquina de estados Zigbee, LED de estado |
-| `main/router.h` | Constantes de configuración, máscaras de canal y macros de inicialización del stack |
-| `main/button.c` | Gestos del botón BOOT (GPIO9): ISR + timers FreeRTOS, toggle TX, factory reset |
-| `main/button.h` | API pública del módulo button: solo `button_init()` |
-| `main/Kconfig.projbuild` | Opciones de configuración exportadas al sistema de compilación |
-| `main/idf_component.yml` | Dependencias de componentes IDF |
-| `sdkconfig.defaults` | Configuración mínima ESP-IDF (flash 16 MB, Zigbee habilitado, log DEBUG) |
-| `partitions.csv` | Tabla de particiones con partición `zb_storage` para NVS Zigbee |
+| File | Description |
+|------|-------------|
+| `main/router.c` | Core logic: initialization, Zigbee state machine, status LED |
+| `main/router.h` | Configuration constants, channel masks, stack init macros |
+| `main/button.c` | BOOT button gestures (GPIO9): ISR + FreeRTOS software timers, TX toggle, factory reset |
+| `main/button.h` | Public button API: `button_init()` only |
+| `main/Kconfig.projbuild` | Build system configuration options |
+| `main/idf_component.yml` | IDF component dependencies |
+| `sdkconfig.defaults` | Minimal ESP-IDF config (16 MB flash, Zigbee enabled, DEBUG log) |
+| `partitions.csv` | Partition table with `zb_storage` partition for Zigbee NVS |
 
-### Flujo de inicialización
+### Initialization Flow
 
 ```
 app_main()
-  ├── configure_led()                        — inicializar LED RGB en GPIO 8 (RMT)
-  ├── button_init()                          — instalar ISR GPIO9 y timers FreeRTOS
-  ├── nvs_flash_init()                       — NVS general
-  ├── nvs_flash_init_partition("zb_storage") — NVS Zigbee
+  ├── configure_led()                        — init RGB LED on GPIO 8 (RMT)
+  ├── button_init()                          — install GPIO9 ISR and FreeRTOS timers
+  ├── nvs_flash_init()                       — general NVS
+  ├── nvs_flash_init_partition("zb_storage") — Zigbee NVS
   └── xTaskCreate(esp_zigbee_stack_main_task, stack=ZIGBEE_MAIN_TASK_STACK_SIZE)
         ├── esp_zigbee_init()
-        ├── esp_ieee802154_set_txpower(ROUTER_TX_POWER_LOW_DBM)  — 8 dBm al arranque
+        ├── esp_ieee802154_set_txpower(ROUTER_TX_POWER_LOW_DBM)  — 8 dBm on boot
         ├── ezb_bdb_set_primary_channel_set()
         ├── ezb_bdb_set_secondary_channel_set()
-        ├── ezb_secur_set_global_link_key()   — TC Link Key estándar HA
+        ├── ezb_secur_set_global_link_key()   — standard HA TC Link Key
         ├── ezb_secur_set_tclk_exchange_required(true)
         ├── register_router_endpoint()        — Range Extender, EP 1, device 0x0008
         └── esp_zigbee_launch_mainloop()
 ```
 
-### Máquina de estados (señales BDB)
+### BDB State Machine
 
-El router gestiona su ciclo de vida en red mediante el handler `esp_zigbee_app_signal_handler`. Los estados principales son:
+| Signal | Action | LED |
+|--------|--------|-----|
+| `EZB_ZDO_SIGNAL_SKIP_STARTUP` | Start `EZB_BDB_MODE_INITIALIZATION` | 🔴 Red |
+| `EZB_BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + factory-new | Start `EZB_BDB_MODE_NETWORK_STEERING` | 🟡 Amber |
+| `EZB_BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + rejoin | Immediate Device Announce | 🟢 Green |
+| `EZB_BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` failure | Retry after `ROUTER_BDB_INIT_RETRY_MS` | 🔴 Red |
+| `EZB_BDB_SIGNAL_STEERING` OK | Joined network, sends Device Announce (×2: 3 s and 8 s) | 🟢 Green |
+| `EZB_BDB_SIGNAL_STEERING` `NO_NETWORK` | Retry, alternates INIT/STEERING | 🟡 Amber |
+| `EZB_BDB_SIGNAL_STEERING` `NOT_PERMITTED` / `TARGET_FAILURE` | Scheduled retry | 🟡 Amber |
+| `EZB_BDB_SIGNAL_STEERING` `TCLK_EX_FAILURE` | Warning log, retry | — |
+| `EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS` active | Join window open on PAN | 🔵 Blue |
+| `EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS` closed | Join window closed | 🟢 Green |
+| `EZB_ZDO_SIGNAL_LEAVE` | Device removed from network | 🔴 Red |
 
-| Señal | Acción | LED |
-|-------|--------|-----|
-| `ZDO_SIGNAL_SKIP_STARTUP` | Lanza `BDB_MODE_INITIALIZATION` | 🔴 Rojo |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + factory-new | Lanza `BDB_MODE_NETWORK_STEERING` | 🟡 Ámbar |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` OK + rejoin | Device Announce inmediato | 🟢 Verde |
-| `BDB_SIGNAL_DEVICE_FIRST_START` / `REBOOT` fallo | Reintento tras `ROUTER_BDB_INIT_RETRY_MS` | 🔴 Rojo |
-| `BDB_SIGNAL_STEERING` OK | Unido a la red, envía Device Announce (×2: 3 s y 8 s) | 🟢 Verde |
-| `BDB_SIGNAL_STEERING` `NO_NETWORK` | Reintento tras `ROUTER_STEERING_RETRY_MS`, alterna INIT/STEERING | 🟡 Ámbar |
-| `BDB_SIGNAL_STEERING` `NOT_PERMITTED` / `TARGET_FAILURE` | Reintento programado | 🟡 Ámbar |
-| `BDB_SIGNAL_STEERING` `TCLK_EX_FAILURE` | Log de advertencia, reintento | — |
-| `NWK_SIGNAL_PERMIT_JOIN_STATUS` activo | Ventana de emparejamiento abierta en el PAN | 🔵 Azul |
-| `NWK_SIGNAL_PERMIT_JOIN_STATUS` cerrado | Ventana de emparejamiento cerrada | 🟢 Verde |
-| `ZDO_SIGNAL_LEAVE` | Dispositivo eliminado de la red | 🔴 Rojo |
+### Steering Retry Logic
 
-### Lógica de reintento de steering
+When steering fails, the firmware alternates between two retry modes to maximize join probability:
 
-Cuando el steering falla, el firmware alterna entre dos modos de reintento para maximizar las probabilidades de unirse a la red:
+- **`EZB_BDB_MODE_NETWORK_STEERING`**: direct join attempt
+- **`EZB_BDB_MODE_INITIALIZATION`**: full stack re-initialization before the next attempt
 
-- **`EZB_BDB_MODE_NETWORK_STEERING`**: intento de join directo
-- **`EZB_BDB_MODE_INITIALIZATION`**: reinicialización completa del stack antes del siguiente intento
+`retry_with_initialization` controls the alternation. A retry is only scheduled if `steering_retry_pending` is `false`, preventing duplicate timer accumulation. Both variables are `_Atomic bool` to guarantee visibility between the timer task and the signal handler.
 
-La variable `retry_with_initialization` controla la alternancia. Un reintento solo se programa si `steering_retry_pending` es `false`, evitando acumulación de timers duplicados. Ambas variables son `_Atomic bool` para garantizar visibilidad entre la tarea del timer y el signal handler.
+### Zigbee Security
 
-### Seguridad Zigbee
+- **Distributed security**: disabled (`ezb_aps_secur_enable_distributed_security(false)`)
+- **Trust Center Link Key**: standard ZigBee Alliance HA key (`ZigBeeAlliance09`)
+- **TCLK exchange**: mandatory (`ezb_secur_set_tclk_exchange_required(true)`)
+- **Minimum LQI for join**: 0 (no filtering, maximum range compatibility)
+- **Install code policy**: enabled (`install_code_policy = true`)
 
-- **Seguridad distribuida**: deshabilitada (`ezb_aps_secur_enable_distributed_security(false)`)
-- **Trust Center Link Key**: clave estándar ZigBee Alliance HA (`ZigBeeAlliance09`)
-- **TCLK exchange**: obligatorio (`ezb_secur_set_tclk_exchange_required(true)`)
-- **LQI mínimo para join**: 0 (sin filtrado, máxima compatibilidad de alcance)
-- **Install code policy**: habilitada (`install_code_policy = true`) — los nuevos dispositivos deben presentar un install code válido antes de recibir una link key única del coordinador.
-
-> ⚠️ El TC Link Key estándar es público y bien conocido. Para redes de producción con requisitos de seguridad elevados, considerar una política de install codes completa.
+> ⚠️ The standard TC Link Key is public and well-known. For production networks with high security requirements, consider a full install code policy.
 
 ---
 
-## Botón BOOT (GPIO9)
+## BOOT Button (GPIO9)
 
-El botón BOOT del DevKitC-1 es un GPIO de propósito general una vez que el firmware está en ejecución. El módulo `button.c` instala una ISR en `ANYEDGE` y gestiona tres software timers FreeRTOS para detectar los siguientes gestos:
+| Gesture | Threshold | Action | LED feedback |
+|---------|-----------|--------|--------------|
+| Triple tap | < 500 ms between presses | Toggle TX power: 8 dBm ↔ 20 dBm | 3× bright red (boost) / 3× soft blue (normal) |
+| Hold 5 s | GPIO LOW for 5 s | Factory reset (Zigbee NVS erase) + reboot | Fast magenta blink → solid red → reboot |
 
-| Gesto | Umbral | Acción | Feedback LED |
-|-------|--------|--------|-------------|
-| Triple toque | < 500 ms entre pulsaciones | Toggle potencia TX: 8 dBm ↔ 20 dBm | 3× rojo brillante (boost) / 3× azul suave (normal) |
-| Mantener 5 s | GPIO en LOW durante 5 s | Factory reset (borrado NVS Zigbee) + reboot | Magenta parpadeante rápido → rojo fijo → reboot |
+> **Factory reset note**: erase is performed with `nvs_flash_erase_partition()` directly on the flash driver. The chip IEEE address (EUI-64) **does not change** — it is burned into factory efuses.
 
-> **Nota sobre el reboot**: el DevKitC-1 dispone de un botón **RST** dedicado en la placa. El gesto de reboot por software no está implementado — usar el botón físico.
-
-> **Nota sobre el factory reset**: el borrado se realiza con `nvs_flash_erase_partition()` directamente sobre el driver de flash, sin pasar por la capa NVS. Esto garantiza el borrado correcto incluso si la partición está no inicializada o corrupta. El IEEE address (EUI-64) del chip **no cambia** — está grabado en efuses de fábrica.
+> **Reboot note**: the DevKitC-1 has a dedicated **RST** button on the board. Software reboot gesture is not implemented — use the physical button.
 
 ---
 
-## Potencia TX (IEEE 802.15.4)
+## TX Power (IEEE 802.15.4)
 
-| Modo | Valor | Cuándo usar |
+| Mode | Value | When to use |
 |------|-------|-------------|
-| Normal (arranque por defecto) | **8 dBm** | Operación diaria en red doméstica. Balance óptimo rango/consumo/interferencia. |
-| Boost (triple-tap) | **20 dBm** | Nodo lejano que no alcanza la red, troubleshooting puntual. Máximo hardware del ESP32-C6 / límite CE ETSI EN 300 328. |
+| Normal (boot default) | **8 dBm** | Daily operation in a home network. Optimal range/power/interference balance. |
+| Boost (triple-tap) | **20 dBm** | Distant node or point troubleshooting. Max ESP32-C6 hardware / CE ETSI EN 300 328 limit. |
 
-El modo boost es **volátil**: revierte a 8 dBm en el siguiente reboot. El ciclo del triple-tap es: `8 dBm → 20 dBm → 8 dBm → ...`
+Boost mode is **volatile**: reverts to 8 dBm on next reboot. Cycle: `8 dBm → 20 dBm → 8 dBm → ...`
 
 ---
 
-## LED de estado — Tabla de colores
+## LED Status Colors
 
-### Colores de estado de red
+### Network state colors
 
-| Color | R | G | B | Estado |
+| Color | R | G | B | State |
+|-------|---|---|---|-------|
+| 🔴 Soft red | 64 | 0 | 0 | No network / critical error / removed from network |
+| 🟡 Amber | 30 | 7 | 0 | Searching for network / join rejected / active without network |
+| 🟢 Green | 0 | 16 | 0 | Connected to Zigbee network |
+| 🔵 Blue | 0 | 0 | 16 | Permit join active on PAN |
+
+### Gesture feedback colors
+
+| Color | R | G | B | Meaning |
 |-------|---|---|---|--------|
-| 🔴 Rojo suave | 64 | 0 | 0 | Sin red / error crítico / dispositivo eliminado de la red |
-| 🟡 Ámbar | 30 | 7 | 0 | Buscando red / join rechazado / dispositivo activo sin red |
-| 🟢 Verde | 0 | 16 | 0 | Conectado a la red Zigbee |
-| 🔵 Azul | 0 | 0 | 16 | Permit join activo en el PAN |
+| 🔴 Bright red | 255 | 0 | 0 | TX boost confirmed (20 dBm active) |
+| 🔵 Soft blue | 0 | 0 | 64 | TX normal confirmed (8 dBm active) |
+| 🟣 Magenta | 255 | 0 | 255 | Destructive action in progress (factory reset) |
 
-### Colores de feedback de gestos
-
-| Color | R | G | B | Significado |
-|-------|---|---|---|-------------|
-| 🔴 Rojo brillante | 255 | 0 | 0 | Confirmación TX boost (20 dBm activo) |
-| 🔵 Azul suave | 0 | 0 | 64 | Confirmación TX normal (8 dBm activo) |
-| 🟣 Magenta | 255 | 0 | 255 | Acción destructiva en curso (factory reset) |
-
-**Semántica de colores:**
-- 🔴 **Rojo** — error crítico o ausencia total de red (dispositivo no operativo) / TX en modo boost
-- 🟡 **Ámbar** — advertencia / en progreso: el dispositivo está activo y reintentando
-- 🟢 **Verde** — estado nominal: el router está integrado en la red y enrutando tráfico
-- 🔵 **Azul** — informativo: ventana de emparejamiento del PAN abierta / TX en modo normal
-- 🟣 **Magenta** — acción destructiva en progreso (parpadeo); no interrumpir
+**Color semantics:**
+- 🔴 **Red** — critical error or total network absence / TX in boost mode
+- 🟡 **Amber** — warning / in progress: device is active and retrying
+- 🟢 **Green** — nominal state: router is integrated in the network and routing traffic
+- 🔵 **Blue** — informational: PAN join window open / TX in normal mode
+- 🟣 **Magenta** — destructive action in progress (blinking); do not interrupt
 
 ---
 
-## Endpoint Zigbee registrado
+## Registered Zigbee Endpoint
 
-| Parámetro | Valor |
+| Parameter | Value |
 |-----------|-------|
 | Endpoint ID | 1 (`ESP_ZIGBEE_RANGE_EXTENDER_EP_ID`) |
-| Perfil | HA (`EZB_AF_HA_PROFILE_ID` / `0x0104`) |
+| Profile | HA (`EZB_AF_HA_PROFILE_ID` / `0x0104`) |
 | Device ID | Range Extender (`0x0008`) |
-| Power Source (cluster Basic) | `SINGLE_PHASE_MAINS` (`0x01`) |
-| Clusters servidor | Basic (con `ManufacturerName` y `ModelIdentifier`) |
+| Power Source (Basic cluster) | `SINGLE_PHASE_MAINS` (`0x01`) |
+| Server clusters | Basic (with `ManufacturerName` and `ModelIdentifier`) |
 
-> El endpoint registra únicamente el cluster Basic con los atributos de identificación obligatorios. No incluye clusters de aplicación (On/Off, etc.) ya que el router actúa exclusivamente como nodo de infraestructura.
-
----
-
-## Tabla de particiones
-
-Configurada en `partitions.csv` con una partición `zb_storage` dedicada al almacenamiento persistente del stack Zigbee (claves de red, dirección, canal). Esto garantiza que el dispositivo recuerde su red tras un ciclo de alimentación sin necesidad de re-emparejamiento.
+> The endpoint registers only the Basic cluster with the mandatory identification attributes. No application clusters (On/Off, etc.) are included since the router acts exclusively as an infrastructure node.
 
 ---
 
-## Versiones
+## Partition Table
 
-Este proyecto sigue [Semantic Versioning](https://semver.org/lang/es/). El historial completo de cambios está en [CHANGELOG.md](CHANGELOG.md).
-
-| Versión | Fecha | Resumen |
-|---------|-------|---------|
-| **v2.0.0** | 2026-06-16 | Botón BOOT: triple-tap toggle TX, hold 5 s factory reset. Corrección borrado NVS. |
-| **v1.0.0** | 2026-06-15 | Router Zigbee funcional, LED RGB, steering retry con alternancia INIT/STEERING. |
-
-> El seguimiento de **PATCH** comienza a partir de la próxima release. Las versiones anteriores no reportaban la versión al hub y los bugfixes no se versionaban de forma independiente.
+Configured in `partitions.csv` with a dedicated `zb_storage` partition for persistent Zigbee stack storage (network keys, address, channel). This ensures the device remembers its network after a power cycle without re-pairing.
 
 ---
 
-## Resolución de problemas
+## Versions
 
-| Síntoma | Causa probable | Acción |
-|---------|----------------|--------|
-| LED 🟡 ámbar constante | Coordinador sin permit join abierto o fuera de rango | Abrir permit join en el coordinador y verificar distancia |
-| 🟡 ámbar alternando con 🔴 rojo | Ciclo STEERING → INITIALIZATION en progreso | Normal si el coordinador no está disponible; esperar o abrir permit join |
-| `TCLK_EX_FAILURE` en logs | Política de seguridad del coordinador incompatible | Verificar que el coordinador acepta el TC Link Key estándar |
-| `NOT_PERMITTED` en logs | Permit join cerrado en el coordinador | Abrir permit join (60–254 s) |
-| Reset por WDT durante steering | Stack insuficiente en la tarea Zigbee | Verificar `ZIGBEE_MAIN_TASK_STACK_SIZE` ≥ 10240 bytes |
-| Dispositivo no visible en la UI del coordinador | `power_source` incorrecto en cluster Basic | Verificar `power_source = SINGLE_PHASE_MAINS` |
-| Router no escanea todos los canales | Máscara primaria demasiado restrictiva | Revisar `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK`; el fallback secundario escaneará 11–26 |
-| Triple-tap no responde | Pulsaciones demasiado lentas | Mantener menos de 500 ms entre cada pulsación |
-| Factory reset no borra la red | Error en `nvs_flash_erase_partition` | Revisar log serie — el error se registra con `ESP_LOGE`; comprobar nombre de partición en `partitions.csv` |
-| TX power no cambia tras triple-tap | `esp_ieee802154_set_txpower` falla | Verificar en log: `set_txpower(%d) failed` — puede indicar conflicto con el stack Zigbee |
+This project follows [Semantic Versioning](https://semver.org/). Full change history in [CHANGELOG.md](CHANGELOG.md).
+
+| Version | Date | Summary |
+|---------|------|---------|
+| **v3.0.0** | 2026-06-17 | Full migration to `esp-zigbee-lib` ≥ 2.0.0 (`ezb_*` API). Compilation breaking change. |
+| **v2.0.0** | 2026-06-16 | BOOT button: triple-tap TX toggle, 5 s hold factory reset. NVS erase fix. |
+| **v1.0.0** | 2026-06-15 | Functional Zigbee router, RGB LED, steering retry with INIT/STEERING alternation. |
 
 ---
 
-## Licencia
+## Troubleshooting
 
-El código fuente original de este proyecto está publicado bajo **CC0-1.0** (dominio público). Ver cabeceras SPDX en los ficheros fuente.
+| Symptom | Likely cause | Action |
+|---------|--------------|--------|
+| Build error `ezb_*` undeclared | SDK 1.x installed | Delete `build/` and components, run `idf.py reconfigure` with SDK ≥ 2.0.0 |
+| 🟡 Amber LED constant | Coordinator permit join closed or out of range | Open permit join on coordinator and check distance |
+| 🟡 Amber alternating with 🔴 Red | STEERING → INITIALIZATION cycle in progress | Normal when coordinator unavailable; wait or open permit join |
+| `TCLK_EX_FAILURE` in logs | Coordinator security policy incompatible | Verify coordinator accepts standard TC Link Key |
+| `NOT_PERMITTED` in logs | Permit join closed on coordinator | Open permit join (60–254 s) |
+| WDT reset during steering | Insufficient Zigbee task stack | Check `ZIGBEE_MAIN_TASK_STACK_SIZE` ≥ 10240 bytes |
+| Device not visible in coordinator UI | Incorrect `power_source` in Basic cluster | Check `power_source = SINGLE_PHASE_MAINS` |
+| Router does not scan all channels | Primary mask too restrictive | Review `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK`; secondary fallback scans 11–26 |
+| Triple-tap not responding | Presses too slow | Keep less than 500 ms between each press |
+| Factory reset does not clear network | Error in `nvs_flash_erase_partition` | Check serial log; verify partition name in `partitions.csv` |
+| TX power does not change after triple-tap | `esp_ieee802154_set_txpower` fails | Check log for `set_txpower(%d) failed` |
 
-Sin embargo, este firmware **enlaza y depende** de las siguientes bibliotecas de Espressif, que tienen sus propias licencias:
+---
 
-| Dependencia | Licencia | Notas |
-|-------------|----------|-------|
-| [ESP-IDF](https://github.com/espressif/esp-idf) | Apache-2.0 | Framework base |
-| [esp-zigbee-sdk](https://github.com/espressif/esp-zigbee-sdk) | Apache-2.0 | SDK Zigbee de alto nivel |
-| [esp-zboss-lib](https://github.com/espressif/esp-zboss-lib) | [Licencia Espressif](https://github.com/espressif/esp-zboss-lib/blob/master/LICENSE) | Stack ZBOSS en binario; licencia separada |
+## License
 
-> ⚠️ Cualquier redistribución o producto derivado debe cumplir con los términos de **todas** las licencias anteriores, incluyendo los requisitos de atribución de Apache-2.0 y las condiciones específicas de `esp-zboss-lib`.
+The original source code of this project is published under **CC0-1.0** (public domain). See SPDX headers in source files.
 
-Para contribuir, ver [CONTRIBUTING.md](CONTRIBUTING.md).
+This firmware **links and depends** on the following Espressif libraries:
+
+| Dependency | License | Notes |
+|------------|---------|-------|
+| [ESP-IDF](https://github.com/espressif/esp-idf) | Apache-2.0 | Base framework |
+| [esp-zigbee-sdk](https://github.com/espressif/esp-zigbee-sdk) | Apache-2.0 | High-level Zigbee SDK |
+| [esp-zboss-lib](https://github.com/espressif/esp-zboss-lib) | [Espressif License](https://github.com/espressif/esp-zboss-lib/blob/master/LICENSE) | ZBOSS stack as binary; separate license |
+
+To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
