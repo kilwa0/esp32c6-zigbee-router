@@ -39,11 +39,28 @@ static const char *TAG = "ROUTER ESP32C6";
  *   MAGENTA    (255,0,255) -> accion destructiva en curso
  *
  * Night mode (button single-tap): todos los set_led() son silenciados
- * mientras button_is_night_mode() devuelva true. */
-#define LED_RED     64,  0,  0
-#define LED_GREEN    0, 16,  0
-#define LED_BLUE     0,  0, 16
-#define LED_AMBER   30,  7,  0
+ * mientras button_is_night_mode() devuelva true.
+ *
+ * NOTA: Las macros LED_* se usan SOLO en comentarios y como referencia de
+ * valores; NO se pasan como argumento a SET_LED_IF_AWAKE porque el
+ * preprocesador de C no divide un argumento de macro en varios parametros
+ * aunque se expanda a una lista separada por comas.  Los valores r,g,b se
+ * escriben siempre de forma explicita en cada llamada. */
+#define LED_R_RED    64
+#define LED_G_RED     0
+#define LED_B_RED     0
+
+#define LED_R_GREEN   0
+#define LED_G_GREEN  16
+#define LED_B_GREEN   0
+
+#define LED_R_BLUE    0
+#define LED_G_BLUE    0
+#define LED_B_BLUE   16
+
+#define LED_R_AMBER  30
+#define LED_G_AMBER   7
+#define LED_B_AMBER   0
 
 /* Helper macro: skips the LED update when night mode is active.
  * Only applies to Zigbee state transitions; button gesture feedback
@@ -146,7 +163,7 @@ static esp_err_t register_router_endpoint(void)
 
     ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
-            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID,
+            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,   /* correct SDK symbol name */
             (const void *)ESP_SW_BUILD_ID);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo anadir SWBuildID: %s", esp_err_to_name(ret));
@@ -232,7 +249,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
     case EZB_ZDO_SIGNAL_SKIP_STARTUP:
         ESP_LOGI(TAG, "Inicializando Router Zigbee Puro...");
         ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_INITIALIZATION);
-        SET_LED_IF_AWAKE(LED_RED);
+        SET_LED_IF_AWAKE(LED_R_RED, LED_G_RED, LED_B_RED);
         break;
 
     case EZB_BDB_SIGNAL_DEVICE_FIRST_START:
@@ -243,12 +260,12 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                  bdb_status_to_str(status), status);
         if (status == EZB_BDB_STATUS_SUCCESS) {
             ESP_LOGI(TAG, "BDB init OK. Factory new: %s", ezb_bdb_is_factory_new() ? "si" : "no");
-            SET_LED_IF_AWAKE(LED_AMBER);
+            SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
             if (ezb_bdb_is_factory_new()) {
                 ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
             } else {
                 ESP_LOGI(TAG, "=== ROUTER RECONECTADO A LA RED ===");
-                SET_LED_IF_AWAKE(LED_GREEN);
+                SET_LED_IF_AWAKE(LED_R_GREEN, LED_G_GREEN, LED_B_GREEN);
                 ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
                 ezb_zdo_device_annce_req(&annce);
                 ESP_LOGI(TAG, "Device Announce enviado (rejoin)");
@@ -267,7 +284,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
             steering_retry_pending = false;
             ESP_LOGI(TAG, "=== JOIN OK: PAN 0x%04hx, Canal %d, Addr 0x%04hx ===",
                      ezb_nwk_get_panid(), ezb_nwk_get_current_channel(), ezb_nwk_get_short_address());
-            SET_LED_IF_AWAKE(LED_GREEN);
+            SET_LED_IF_AWAKE(LED_R_GREEN, LED_G_GREEN, LED_B_GREEN);
             alarm_timer_schedule(send_device_announce, 0, 3000);
             alarm_timer_schedule(send_device_announce, 0, 8000);
         } else {
@@ -278,13 +295,13 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                      bdb_status_to_str(status), status, ROUTER_STEERING_RETRY_MS);
             if (status == EZB_BDB_STATUS_NO_NETWORK) {
                 ESP_LOGW(TAG, "No se encontro red Zigbee: verificar coordinador en modo emparejamiento y dentro de rango");
-                SET_LED_IF_AWAKE(LED_AMBER);
+                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
             } else if (status == EZB_BDB_STATUS_NOT_PERMITTED) {
                 ESP_LOGW(TAG, "Join no permitido por el coordinador (permit join cerrado)");
-                SET_LED_IF_AWAKE(LED_AMBER);
+                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
             } else if (status == EZB_BDB_STATUS_TARGET_FAILURE) {
                 ESP_LOGW(TAG, "Fallo de join: el coordinador rechazo la solicitud de join");
-                SET_LED_IF_AWAKE(LED_AMBER);
+                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
             } else if (status == EZB_BDB_STATUS_TCLK_EX_FAILURE) {
                 ESP_LOGW(TAG, "Fallo intercambio de Trust Center Link Key");
             }
@@ -307,16 +324,16 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
         uint8_t duration = *(uint8_t *)ezb_app_signal_get_params(app_signal);
         if (duration > 0) {
             ESP_LOGI(TAG, "Permit join activo en PAN 0x%04hx durante %u s", ezb_nwk_get_panid(), duration);
-            SET_LED_IF_AWAKE(LED_BLUE);
+            SET_LED_IF_AWAKE(LED_R_BLUE, LED_G_BLUE, LED_B_BLUE);
         } else {
             ESP_LOGW(TAG, "Permit join cerrado en PAN 0x%04hx", ezb_nwk_get_panid());
-            SET_LED_IF_AWAKE(LED_GREEN);
+            SET_LED_IF_AWAKE(LED_R_GREEN, LED_G_GREEN, LED_B_GREEN);
         }
     } break;
 
     case EZB_ZDO_SIGNAL_LEAVE:
         ESP_LOGW(TAG, "Dispositivo salio de la red");
-        SET_LED_IF_AWAKE(LED_RED);
+        SET_LED_IF_AWAKE(LED_R_RED, LED_G_RED, LED_B_RED);
         break;
 
     case EZB_ZDO_SIGNAL_LEAVE_INDICATION: {
@@ -326,7 +343,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 
     default:
         ESP_LOGI(TAG, "ZB signal: %s (0x%02x)", ezb_app_signal_to_string(signal_type), signal_type);
-        SET_LED_IF_AWAKE(LED_GREEN);
+        SET_LED_IF_AWAKE(LED_R_GREEN, LED_G_GREEN, LED_B_GREEN);
         break;
     }
     return true;
