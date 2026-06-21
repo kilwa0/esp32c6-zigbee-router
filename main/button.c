@@ -214,7 +214,7 @@ static void do_permit_join(void)
     esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Permit-join OPEN (%u s)", PERMIT_JOIN_S);
 
-    start_blink(false, _SOFT_GREEN);
+    start_blink(false, _CYAN);
 
     xTimerChangePeriod(s_pj_timer,
                        pdMS_TO_TICKS((uint32_t)PERMIT_JOIN_S * 1000U), 0);
