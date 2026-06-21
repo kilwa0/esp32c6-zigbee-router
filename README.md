@@ -145,6 +145,8 @@ Defined in `main/router.h`:
 | `ROUTER_BDB_INIT_RETRY_MS` | `2000` ms | Delay between BDB initialisation retries |
 | `ROUTER_STEERING_RETRY_MS` | `5000` ms | Delay between network steering retries |
 | `ROUTER_PERMIT_JOIN_DURATION_S` | `60` s | Duration of the Permit Join window opened by double-tap |
+| `ROUTER_JOIN_OPEN_DURATION_S` | `255` s | Duration of the Permit Join window opened by the coordinator via `ROUTER_JOIN_OPEN_DURATION_S` (passed to `ezb_bdb_open_network` on coordinator-triggered joins) |
+| `ROUTER_MAX_CHILDREN` | `6` | Maximum number of child devices the router will accept |
 | `ZIGBEE_MAIN_TASK_STACK_SIZE` | `10240` bytes | Zigbee main task stack size |
 | `ROUTER_TX_POWER_LOW_DBM` | `8` dBm | Normal RF operating power |
 | `ROUTER_TX_POWER_HIGH_DBM` | `20` dBm | Boost RF power (triple-tap) |
@@ -159,8 +161,8 @@ Defined in `main/router.h`:
 |------|-------------|
 | `main/router.c` | Core logic: initialisation, Zigbee state machine, status LED |
 | `main/router.h` | Configuration constants, channel masks and stack initialisation macros |
-| `main/button.c` | BOOT button gestures (GPIO9): ISR + FreeRTOS timers, TX toggle, factory reset, permit-join |
-| `main/button.h` | Public button module API: `button_init()` only |
+| `main/button.c` | BOOT button gestures (GPIO9): ISR + FreeRTOS timers, TX toggle, factory reset, permit-join, night mode |
+| `main/button.h` | Public button module API: `button_init()` and `button_is_night_mode()` |
 | `main/Kconfig.projbuild` | Configuration options exported to the build system |
 | `main/idf_component.yml` | IDF component dependencies |
 | `sdkconfig.defaults` | Minimal ESP-IDF configuration (16 MB flash, Zigbee enabled, DEBUG log) |
@@ -177,10 +179,12 @@ app_main()
   └── xTaskCreate(esp_zigbee_stack_main_task, stack=ZIGBEE_MAIN_TASK_STACK_SIZE)
         ├── esp_zigbee_init()
         ├── esp_ieee802154_set_txpower(ROUTER_TX_POWER_LOW_DBM)  — 8 dBm at boot
-        ├── ezb_bdb_set_primary_channel_set()
-        ├── ezb_bdb_set_secondary_channel_set()
+        ├── ezb_aps_secur_enable_distributed_security(false)
         ├── ezb_secur_set_global_link_key()   — HA standard TC Link Key
         ├── ezb_secur_set_tclk_exchange_required(true)
+        ├── ezb_nwk_set_min_join_lqi(0)       — no LQI filtering
+        ├── ezb_bdb_set_primary_channel_set()
+        ├── ezb_bdb_set_secondary_channel_set()
         ├── register_router_endpoint()        — Range Extender, EP 1, device 0x0008
         └── esp_zigbee_launch_mainloop()
 ```
@@ -226,13 +230,16 @@ The variable `retry_with_initialization` controls the alternation. A retry is on
 
 ## BOOT button (GPIO9)
 
-The DevKitC-1 BOOT button is a general-purpose GPIO once firmware is running. The `button.c` module installs an `ANYEDGE` ISR and manages **four** FreeRTOS software timers to detect the following gestures:
+The DevKitC-1 BOOT button is a general-purpose GPIO once firmware is running. The `button.c` module installs an `ANYEDGE` ISR and manages **four** FreeRTOS software timers (`btn_tap`, `btn_hold`, `btn_blink`, `btn_pj`) to detect the following gestures:
 
 | Gesture | Threshold | Action | LED feedback |
 |---------|-----------|--------|--------------|
-| Double-tap | < 500 ms between presses | Open Permit Join window for `ROUTER_PERMIT_JOIN_DURATION_S` (60 s) | 🩵 Cyan pulsing while window is open |
+| Single-tap | < 500 ms tap window | Toggle LED night mode (silence / restore LED) | LED off (night mode ON) / solid green (night mode OFF) |
+| Double-tap | < 500 ms between presses | Open Permit Join window for `ROUTER_PERMIT_JOIN_DURATION_S` (60 s); second double-tap closes it early | 🟢 Slow soft-green pulse while window is open |
 | Triple-tap | < 500 ms between presses | Toggle TX power: 8 dBm ↔ 20 dBm | 3× bright red (boost) / 3× soft blue (normal) |
 | Hold 5 s | GPIO LOW for 5 s | Factory reset (Zigbee NVS erase) + reboot | Fast magenta blink → solid red → reboot |
+
+> **Night mode**: single-tap silences all Zigbee-state LED updates (`SET_LED_IF_AWAKE` guard in `router.c`). Gesture feedback from `button.c` is **not** suppressed — the user explicitly triggered it. Night mode is volatile and resets on reboot.
 
 > **Note on reboot**: the DevKitC-1 has a dedicated **RST** button on the board. A software reboot gesture is not implemented — use the physical button.
 
@@ -263,7 +270,7 @@ Boost mode is **volatile**: reverts to 8 dBm on the next reboot. The triple-tap 
 | 🟡 Amber | 30 | 7 | 0 | Searching for network / join rejected / active device without network |
 | 🟢 Green | 0 | 16 | 0 | Connected to the Zigbee network |
 | 🔵 Blue | 0 | 0 | 16 | Permit Join active in the PAN (coordinator-triggered) |
-| 🩵 Cyan pulsing | 0 | 64 | 64 | Permit Join window open (locally triggered by double-tap) |
+| 🟢 Soft green pulsing | 0 | 32 | 0 | Permit Join window open (locally triggered by double-tap) |
 
 ### Gesture feedback colours
 
@@ -278,7 +285,7 @@ Boost mode is **volatile**: reverts to 8 dBm on the next reboot. The triple-tap 
 - 🟡 **Amber** — warning / in progress: device is active and retrying
 - 🟢 **Green** — nominal state: router is integrated in the network and relaying traffic
 - 🔵 **Blue** — informational: PAN pairing window open (coordinator-triggered) / TX in normal mode
-- 🩵 **Cyan pulsing** — Permit Join window open locally (double-tap); new devices can join
+- 🟢 **Soft green pulsing** — Permit Join window open locally (double-tap); new devices can join
 - 🟣 **Magenta** — destructive action in progress (pulsing); do not interrupt
 
 ---
@@ -317,7 +324,7 @@ This project follows [Semantic Versioning](https://semver.org/). The full change
 
 | Version | Date | Summary |
 |---------|------|---------|
-| **v4.0.0** | 2026-06-21 | Double-tap Permit Join gesture, cyan pulsing LED, `SWBuildID` ZCL attribute. |
+| **v4.0.0** | 2026-06-21 | Double-tap Permit Join gesture, soft-green pulsing LED, `SWBuildID` ZCL attribute, single-tap night mode. |
 | **v3.0.0** | 2026-06-17 | Full Zigbee SDK migration from `esp_zb_*` to `ezb_*` (esp-zigbee-lib 2.x). No runtime change. |
 | **v2.0.0** | 2026-06-16 | BOOT button: triple-tap TX toggle, 5 s hold factory reset. NVS erase fix. |
 | **v1.0.0** | 2026-06-15 | Functional Zigbee router, RGB LED, steering retry with INIT/STEERING alternation. |
@@ -335,6 +342,7 @@ This project follows [Semantic Versioning](https://semver.org/). The full change
 | WDT reset during steering | Insufficient stack in Zigbee task | Verify `ZIGBEE_MAIN_TASK_STACK_SIZE` ≥ 10240 bytes |
 | Device not visible in coordinator UI | Incorrect `power_source` in Basic cluster | Verify `power_source = SINGLE_PHASE_MAINS` |
 | Router does not scan all channels | Primary mask too restrictive | Check `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK`; secondary fallback scans 11–26 |
+| Single-tap does not toggle night mode | Tap too slow (outside 500 ms tap window) | Tap cleanly within the window; check for false double-tap detection |
 | Double-tap does not open permit join | Taps too slow or interrupted by triple-tap detection | Keep < 500 ms between presses; exactly 2 taps |
 | Triple-tap does not respond | Presses too slow | Keep < 500 ms between each press |
 | Factory reset does not clear network | Error in `nvs_flash_erase_partition` | Check serial log — error logged with `ESP_LOGE`; verify partition name in `partitions.csv` |
@@ -354,6 +362,4 @@ However, this firmware **links and depends on** the following Espressif librarie
 | [esp-zigbee-sdk](https://github.com/espressif/esp-zigbee-sdk) | Apache-2.0 | High-level Zigbee SDK |
 | [esp-zboss-lib](https://github.com/espressif/esp-zboss-lib) | [Espressif Licence](https://github.com/espressif/esp-zboss-lib/blob/master/LICENSE) | Binary ZBOSS stack; separate licence |
 
-> ⚠️ Any redistribution or derivative work must comply with the terms of **all** the above licences, including the Apache-2.0 attribution requirements and the specific conditions of `esp-zboss-lib`.
-
-To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
+> ⚠️ Any redistribution or derivative work must comply with the terms of **all** the above licences, including the attribution requirements of Apache-2.0 and the specific conditions of `esp-zboss-lib`.
