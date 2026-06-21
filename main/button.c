@@ -26,7 +26,7 @@ static const char *TAG = "BUTTON";
 #define TX_CONFIRM_FLASHES  3U
 #define TX_FLASH_ON_MS      120U
 #define TX_FLASH_OFF_MS     120U
-#define PERMIT_JOIN_S       60U     /* permit-join window duration         */
+#define PERMIT_JOIN_S       ROUTER_PERMIT_JOIN_DURATION_S     /* permit-join window duration         */
 #define PERMIT_JOIN_BLINK_MS 400U   /* slow green pulse during pj window   */
 
 /* -------------------------------------------------------------------------

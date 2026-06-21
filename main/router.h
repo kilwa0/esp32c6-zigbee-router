@@ -77,3 +77,5 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
         .device_config = ESP_ZIGBEE_ROUTER_CONFIG(),        \
         .platform_config = ESP_ZIGBEE_PLATFORM_CONFIG(),    \
     };
+
+#define ROUTER_PERMIT_JOIN_DURATION_S  60U
