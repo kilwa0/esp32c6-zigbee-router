@@ -13,7 +13,7 @@ Firmware ESP-IDF para el ESP32-C6 que implementa un **router Zigbee puro** con L
 | SoC | ESP32-C6 (IEEE 802.15.4 nativo) |
 | Flash | 16 MB |
 | LED de estado | LED RGB direccionable (WS2812 o compatible) en GPIO 8 vía RMT |
-| Framework | ESP-IDF ≥ 6.2.0 |
+| Framework | ESP-IDF ≥ 5.3.5 |
 | SDK Zigbee | `esp-zigbee-lib` ≥ 2.0.0 (API `ezb_*`) |
 
 ---
@@ -90,7 +90,7 @@ Firmware ESP-IDF para el ESP32-C6 que implementa un **router Zigbee puro** con L
 
 ## Requisitos de compilación
 
-- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/) ≥ 6.2.0 con soporte ESP32-C6
+- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/) ≥ 5.3.5 con soporte ESP32-C6
 - Componente `ezbee` (wrapper de alto nivel sobre `esp-zigbee-lib`)
 - Componente `alarm_timer` (timers diferidos no bloqueantes)
 - Componente `led_strip` (driver WS2812 vía RMT)
