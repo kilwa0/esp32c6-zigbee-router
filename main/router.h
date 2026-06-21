@@ -19,6 +19,15 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 #define ESP_MANUFACTURER_NAME "\x09" "ESPRESSIF"
 #define ESP_MODEL_IDENTIFIER  "\x08" "ESP32-C6"
 
+/* Firmware version string exposed via ZCL Basic cluster, attribute SWBuildID (0x4000).
+ * Format: ZCL character string (Pascal-style, length-prefixed).
+ *
+ * SemVer policy:
+ *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
+ *   MINOR -> non-disruptive feature
+ *   PATCH -> bugfix only */
+#define ESP_SW_BUILD_ID       "\x05" "4.0.0"
+
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
 
@@ -68,3 +77,5 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
         .device_config = ESP_ZIGBEE_ROUTER_CONFIG(),        \
         .platform_config = ESP_ZIGBEE_PLATFORM_CONFIG(),    \
     };
+
+#define ROUTER_PERMIT_JOIN_DURATION_S  60U
