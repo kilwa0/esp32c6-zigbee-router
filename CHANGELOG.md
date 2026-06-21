@@ -17,9 +17,13 @@ Versioned according to [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
-_No changes pending beyond v4.0.0._
+_No changes pending beyond v4.0.1._
 
 ---
+
+## [4.0.1] - 2026-06-21
+
+- **Fix typo in documentation regarding about the idf version used** Release 6.2.0 does not exist and we are building this with 5.3.5
 
 ## [4.0.0] — 2026-06-21
 
