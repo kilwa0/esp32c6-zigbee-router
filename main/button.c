@@ -40,7 +40,7 @@ extern void set_led_locked(uint8_t r, uint8_t g, uint8_t b);
 #define _SOFT_BLUE        0,   0,  64
 #define _GREEN            0,  16,   0
 #define _RED             64,   0,   0
-#define _SOFT_GREEN       0,  32,   0   /* permit-join blink colour        */
+#define _CYAN             0,  64,  64   /* permit-join blink colour        */
 
 /* -------------------------------------------------------------------------
  * State
