@@ -145,7 +145,7 @@ Defined in `main/router.h`:
 | `ROUTER_BDB_INIT_RETRY_MS` | `2000` ms | Delay between BDB initialisation retries |
 | `ROUTER_STEERING_RETRY_MS` | `5000` ms | Delay between network steering retries |
 | `ROUTER_PERMIT_JOIN_DURATION_S` | `60` s | Duration of the Permit Join window opened by double-tap |
-| `ROUTER_JOIN_OPEN_DURATION_S` | `255` s | Duration of the Permit Join window opened by the coordinator via `ROUTER_JOIN_OPEN_DURATION_S` (passed to `ezb_bdb_open_network` on coordinator-triggered joins) |
+| `ROUTER_JOIN_OPEN_DURATION_S` | `255` s | Duration passed to the coordinator when opening a network-level join window |
 | `ROUTER_MAX_CHILDREN` | `6` | Maximum number of child devices the router will accept |
 | `ZIGBEE_MAIN_TASK_STACK_SIZE` | `10240` bytes | Zigbee main task stack size |
 | `ROUTER_TX_POWER_LOW_DBM` | `8` dBm | Normal RF operating power |
@@ -161,7 +161,7 @@ Defined in `main/router.h`:
 |------|-------------|
 | `main/router.c` | Core logic: initialisation, Zigbee state machine, status LED |
 | `main/router.h` | Configuration constants, channel masks and stack initialisation macros |
-| `main/button.c` | BOOT button gestures (GPIO9): ISR + FreeRTOS timers, TX toggle, factory reset, permit-join, night mode |
+| `main/button.c` | BOOT button gestures (GPIO9): ISR + FreeRTOS timers, night mode, TX toggle, factory reset, permit-join |
 | `main/button.h` | Public button module API: `button_init()` and `button_is_night_mode()` |
 | `main/Kconfig.projbuild` | Configuration options exported to the build system |
 | `main/idf_component.yml` | IDF component dependencies |
@@ -186,7 +186,7 @@ app_main()
         ├── ezb_bdb_set_primary_channel_set()
         ├── ezb_bdb_set_secondary_channel_set()
         ├── register_router_endpoint()        — Range Extender, EP 1, device 0x0008
-        └── esp_zigbee_launch_mainloop()
+        └── esp_zigbee_start() → esp_zigbee_launch_mainloop()
 ```
 
 ### State machine (BDB signals)
@@ -234,12 +234,12 @@ The DevKitC-1 BOOT button is a general-purpose GPIO once firmware is running. Th
 
 | Gesture | Threshold | Action | LED feedback |
 |---------|-----------|--------|--------------|
-| Single-tap | < 500 ms tap window | Toggle LED night mode (silence / restore LED) | LED off (night mode ON) / solid green (night mode OFF) |
-| Double-tap | < 500 ms between presses | Open Permit Join window for `ROUTER_PERMIT_JOIN_DURATION_S` (60 s); second double-tap closes it early | 🟢 Slow soft-green pulse while window is open |
+| Single-tap | < 500 ms tap window | Toggle LED night mode: silences / restores all Zigbee-state LED updates | LED off (night mode ON) / back to green (night mode OFF) |
+| Double-tap | < 500 ms between presses | Open Permit Join window for `ROUTER_PERMIT_JOIN_DURATION_S` (60 s). A second double-tap while the window is open closes it immediately. | Slow green pulsing while window is open |
 | Triple-tap | < 500 ms between presses | Toggle TX power: 8 dBm ↔ 20 dBm | 3× bright red (boost) / 3× soft blue (normal) |
 | Hold 5 s | GPIO LOW for 5 s | Factory reset (Zigbee NVS erase) + reboot | Fast magenta blink → solid red → reboot |
 
-> **Night mode**: single-tap silences all Zigbee-state LED updates (`SET_LED_IF_AWAKE` guard in `router.c`). Gesture feedback from `button.c` is **not** suppressed — the user explicitly triggered it. Night mode is volatile and resets on reboot.
+> **Note on night mode**: only Zigbee state-transition LED updates are suppressed. Gesture feedback from `button.c` (TX toggle flashes, factory reset blink, permit-join pulse) is **not** suppressed — the user explicitly triggered it.
 
 > **Note on reboot**: the DevKitC-1 has a dedicated **RST** button on the board. A software reboot gesture is not implemented — use the physical button.
 
@@ -324,7 +324,7 @@ This project follows [Semantic Versioning](https://semver.org/). The full change
 
 | Version | Date | Summary |
 |---------|------|---------|
-| **v4.0.0** | 2026-06-21 | Double-tap Permit Join gesture, soft-green pulsing LED, `SWBuildID` ZCL attribute, single-tap night mode. |
+| **v4.0.0** | 2026-06-21 | Single-tap night mode, double-tap Permit Join, soft-green pulsing LED, `SWBuildID` ZCL attribute. |
 | **v3.0.0** | 2026-06-17 | Full Zigbee SDK migration from `esp_zb_*` to `ezb_*` (esp-zigbee-lib 2.x). No runtime change. |
 | **v2.0.0** | 2026-06-16 | BOOT button: triple-tap TX toggle, 5 s hold factory reset. NVS erase fix. |
 | **v1.0.0** | 2026-06-15 | Functional Zigbee router, RGB LED, steering retry with INIT/STEERING alternation. |
@@ -335,6 +335,7 @@ This project follows [Semantic Versioning](https://semver.org/). The full change
 
 | Symptom | Probable cause | Action |
 |---------|----------------|--------|
+| LED off, device operational | Night mode active (single-tap) | Single-tap again to restore LED |
 | LED 🟡 amber constant | Coordinator without permit join open or out of range | Open permit join on the coordinator and verify distance |
 | 🟡 amber alternating with 🔴 red | STEERING → INITIALIZATION cycle in progress | Normal if coordinator unavailable; wait or open permit join |
 | `TCLK_EX_FAILURE` in logs | Incompatible coordinator security policy | Verify coordinator accepts the standard TC Link Key |
@@ -342,7 +343,7 @@ This project follows [Semantic Versioning](https://semver.org/). The full change
 | WDT reset during steering | Insufficient stack in Zigbee task | Verify `ZIGBEE_MAIN_TASK_STACK_SIZE` ≥ 10240 bytes |
 | Device not visible in coordinator UI | Incorrect `power_source` in Basic cluster | Verify `power_source = SINGLE_PHASE_MAINS` |
 | Router does not scan all channels | Primary mask too restrictive | Check `ESP_ZIGBEE_PRIMARY_CHANNEL_MASK`; secondary fallback scans 11–26 |
-| Single-tap does not toggle night mode | Tap too slow (outside 500 ms tap window) | Tap cleanly within the window; check for false double-tap detection |
+| Single-tap does not toggle night mode | Tap too slow or counted as double-tap start | Single clean tap within 500 ms window |
 | Double-tap does not open permit join | Taps too slow or interrupted by triple-tap detection | Keep < 500 ms between presses; exactly 2 taps |
 | Triple-tap does not respond | Presses too slow | Keep < 500 ms between each press |
 | Factory reset does not clear network | Error in `nvs_flash_erase_partition` | Check serial log — error logged with `ESP_LOGE`; verify partition name in `partitions.csv` |
@@ -362,4 +363,6 @@ However, this firmware **links and depends on** the following Espressif librarie
 | [esp-zigbee-sdk](https://github.com/espressif/esp-zigbee-sdk) | Apache-2.0 | High-level Zigbee SDK |
 | [esp-zboss-lib](https://github.com/espressif/esp-zboss-lib) | [Espressif Licence](https://github.com/espressif/esp-zboss-lib/blob/master/LICENSE) | Binary ZBOSS stack; separate licence |
 
-> ⚠️ Any redistribution or derivative work must comply with the terms of **all** the above licences, including the attribution requirements of Apache-2.0 and the specific conditions of `esp-zboss-lib`.
+> ⚠️ Any redistribution or derivative work must comply with the terms of **all** the above licences, including Apache-2.0 attribution requirements and the specific conditions of `esp-zboss-lib`.
+
+To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
