@@ -14,6 +14,7 @@ ESP-IDF firmware for the ESP32-C6 implementing a **pure Zigbee router** with an 
 | Flash | 16 MB |
 | Status LED | Addressable RGB LED (WS2812 or compatible) on GPIO 8 via RMT |
 | Framework | ESP-IDF ≥ 6.2.0 |
+| Zigbee SDK | `esp-zigbee-lib` ≥ 2.0.0 (`ezb_*` API) |
 
 ---
 
