@@ -429,7 +429,7 @@ esp_err_t router_report_gesture(uint8_t scene_id)
     ezb_err_t err = ezb_zcl_scenes_recall_scene_cmd_req(&cmd);
     esp_zigbee_lock_release();
 
-    if (err != EZB_OK) {
+    if (err != ESP_OK) {
         ESP_LOGE(TAG, "Recall Scene gesto %u error: 0x%x", scene_id, (unsigned)err);
         return ESP_FAIL;
     }
