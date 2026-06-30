@@ -72,10 +72,6 @@ static void tap_window_cb(TimerHandle_t t);
 static void hold_cb(TimerHandle_t t);
 static void blink_cb(TimerHandle_t t);
 static void pj_expired_cb(TimerHandle_t t);
-static void do_night_mode_toggle(void);
-static void do_permit_join(void);
-static void do_tx_toggle(void);
-static void do_factory_reset(void);
 static void start_blink(bool fast, uint8_t r, uint8_t g, uint8_t b);
 static void stop_blink(void);
 static void btn_isr(void *arg);
@@ -166,10 +162,11 @@ static void pj_expired_cb(TimerHandle_t t)
 
 /* -------------------------------------------------------------------------
  * Actions
+ * These are NOT static so router.c can call them via button_remote_trigger().
  * ---------------------------------------------------------------------- */
 
 /**
- * @brief Toggle LED night mode (single-tap).
+ * @brief Toggle LED night mode (single-tap / remote cmd 0x01).
  *
  * In night mode all Zigbee-state LED updates are suppressed by
  * button_is_night_mode() guards in router.c.  Gesture feedback from
@@ -177,7 +174,7 @@ static void pj_expired_cb(TimerHandle_t t)
  *
  * @note Volatile; reverts to LED-on on reboot.
  */
-static void do_night_mode_toggle(void)
+void do_night_mode_toggle(void)
 {
     s_night_mode = !s_night_mode;
     if (s_night_mode) {
@@ -190,19 +187,19 @@ static void do_night_mode_toggle(void)
 }
 
 /**
- * @brief Open or close a permit-join window (double-tap).
+ * @brief Open or close a permit-join window (double-tap / remote cmd 0x02).
  *
- * First double-tap opens a 60 s permit-join window with slow green
- * blink feedback.  A second double-tap while the window is open closes
- * it immediately.  The Zigbee stack is notified via
- * ezb_bdb_open_network(); the pj_timer drives the auto-expiry.
+ * First call opens a 60 s permit-join window with slow cyan blink
+ * feedback.  A second call while the window is open closes it
+ * immediately.  The Zigbee stack is notified via ezb_bdb_open_network();
+ * the pj_timer drives the auto-expiry.
  *
  * @note Volatile; window does not survive a reboot.
  */
-static void do_permit_join(void)
+void do_permit_join(void)
 {
     if (s_permit_join_active) {
-        /* Second double-tap: close early */
+        /* Second call: close early */
         xTimerStop(s_pj_timer, 0);
         pj_expired_cb(NULL);
         return;
@@ -221,7 +218,11 @@ static void do_permit_join(void)
     xTimerReset(s_pj_timer, 0);
 }
 
-static void do_tx_toggle(void)
+/**
+ * @brief Toggle TX power between LOW (8 dBm) and HIGH (20 dBm)
+ *        (triple-tap / remote cmd 0x03).
+ */
+void do_tx_toggle(void)
 {
     s_high_power = !s_high_power;
     int8_t pwr = s_high_power ? ROUTER_TX_POWER_HIGH_DBM : ROUTER_TX_POWER_LOW_DBM;
@@ -250,7 +251,13 @@ static void do_tx_toggle(void)
     set_led_locked(_GREEN);
 }
 
-static void do_factory_reset(void)
+/**
+ * @brief Erase Zigbee NVS partition and reboot (hold 5 s / remote cmd 0x04).
+ *
+ * Destructive and irreversible.  Physical hold requires deliberate
+ * 5-second press; remote trigger requires explicit command 0x04.
+ */
+void do_factory_reset(void)
 {
     ESP_LOGW(TAG, "Factory reset: erasing NVS partition '%s'",
              ESP_ZIGBEE_STORAGE_PARTITION_NAME);
@@ -294,15 +301,29 @@ static void stop_blink(void)
  * Public API
  * ---------------------------------------------------------------------- */
 
-/**
- * @brief Returns true while LED night mode is active.
- *
- * Called from router.c before every Zigbee-state LED update to suppress
- * the update while the user has silenced the LED.
- */
 bool button_is_night_mode(void)
 {
     return s_night_mode;
+}
+
+/**
+ * @brief Execute a gesture action programmatically (remote trigger).
+ *
+ * Called from router.c ZCL custom cluster command handler.
+ */
+esp_err_t button_remote_trigger(button_action_t action)
+{
+    ESP_LOGI(TAG, "Remote trigger: action=0x%02x", (unsigned)action);
+    switch (action) {
+    case BUTTON_ACTION_NIGHT_MODE:  do_night_mode_toggle(); return ESP_OK;
+    case BUTTON_ACTION_PERMIT_JOIN: do_permit_join();       return ESP_OK;
+    case BUTTON_ACTION_TX_TOGGLE:   do_tx_toggle();         return ESP_OK;
+    case BUTTON_ACTION_FACTORY_RST: do_factory_reset();     return ESP_OK;
+    default:
+        ESP_LOGW(TAG, "remote_trigger: unknown action 0x%02x -- ignored",
+                 (unsigned)action);
+        return ESP_ERR_INVALID_ARG;
+    }
 }
 
 esp_err_t button_init(void)
