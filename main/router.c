@@ -125,10 +125,23 @@ esp_err_t router_report_gesture(uint8_t scene_id)
  * Ejecutada desde gesture_flush_alarm(), que corre en el contexto del stack
  * Zigbee -- el lock ya esta adquirido, no usar esp_zigbee_lock_acquire aqui.
  *
- * Struct verificado contra:
- *   ezbee/zcl/cluster/scenes.h -- ezb_zcl_scenes_recall_scene_cmd_t
- *   .cmd_ctrl.dst_addr_u.addr_short / .dst_endpoint / .src_endpoint
- *   .payload.group_id / .payload.scene_id / .payload.transition_time
+ * Campos verificados en los headers del SDK instalado:
+ *
+ *   ezbee/zcl/cluster/scenes.h -- ezb_zcl_scenes_recall_scene_cmd_t:
+ *     .cmd_ctrl  (ezb_zcl_cluster_cmd_ctrl_t)
+ *     .payload.group_id / .payload.scene_id / .payload.transition_time
+ *
+ *   ezbee/zcl/zcl_common.h -- ezb_zcl_cluster_cmd_ctrl_t:
+ *     .dst_addr  (ezb_address_t, NO dst_addr_u)
+ *     .dst_ep    (NO dst_endpoint)
+ *     .src_ep    (NO src_endpoint)
+ *     .dis_default_rsp (bool)
+ *
+ *   ezbee/core_types.h -- ezb_address_t:
+ *     { .addr_mode, .u.short_addr }
+ *     Macro de conveniencia: EZB_ADDRESS_SHORT(addr)
+ *
+ *   ezbee/error.h -- codigo de exito: EZB_ERR_NONE (= 0), NO EZB_OK
  */
 static void flush_gesture_queue(void)
 {
@@ -136,9 +149,10 @@ static void flush_gesture_queue(void)
     while (xQueueReceive(s_gesture_queue, &scene_id, 0) == pdTRUE) {
         ezb_zcl_scenes_recall_scene_cmd_t cmd = {
             .cmd_ctrl = {
-                .dst_addr_u.addr_short = 0x0000U,
-                .dst_endpoint          = 1U,
-                .src_endpoint          = ROUTER_GESTURE_ENDPOINT,
+                .dst_addr        = EZB_ADDRESS_SHORT(0x0000U),
+                .dst_ep          = 1U,
+                .src_ep          = ROUTER_GESTURE_ENDPOINT,
+                .dis_default_rsp = true,
             },
             .payload = {
                 .group_id        = ROUTER_GESTURE_GROUP_ID,
@@ -147,7 +161,7 @@ static void flush_gesture_queue(void)
             },
         };
         ezb_err_t err = ezb_zcl_scenes_recall_scene_cmd_req(&cmd);
-        if (err != EZB_OK) {
+        if (err != EZB_ERR_NONE) {
             ESP_LOGE("GESTURE", "Recall Scene (gesto %u) fallido: 0x%x",
                      scene_id, err);
         } else {
