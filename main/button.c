@@ -187,6 +187,7 @@ static void do_night_mode_toggle(void)
         set_led_locked(_GREEN);
         ESP_LOGI(TAG, "Night mode OFF -- LED restored");
     }
+    router_report_gesture(1);
 }
 
 /**
@@ -219,6 +220,7 @@ static void do_permit_join(void)
     xTimerChangePeriod(s_pj_timer,
                        pdMS_TO_TICKS((uint32_t)PERMIT_JOIN_S * 1000U), 0);
     xTimerReset(s_pj_timer, 0);
+    router_report_gesture(2);
 }
 
 static void do_tx_toggle(void)
@@ -248,6 +250,7 @@ static void do_tx_toggle(void)
         vTaskDelay(pdMS_TO_TICKS(TX_FLASH_OFF_MS));
     }
     set_led_locked(_GREEN);
+    router_report_gesture(3);
 }
 
 static void do_factory_reset(void)
@@ -255,6 +258,10 @@ static void do_factory_reset(void)
     ESP_LOGW(TAG, "Factory reset: erasing NVS partition '%s'",
              ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     set_led_locked(_RED);
+
+    /* Report gesture BEFORE erasing NVS so the frame has time to transmit. */
+    router_report_gesture(4);
+    vTaskDelay(pdMS_TO_TICKS(150));
 
     esp_err_t err = nvs_flash_erase_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     if (err != ESP_OK) {
