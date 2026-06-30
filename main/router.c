@@ -31,14 +31,6 @@ static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
-/* Colores del LED de estado (R, G, B) -- valores 0-255.
- *
- * Semantica operacional:
- *   RED    -> error / fuera de red
- *   AMBER  -> buscando red / join en progreso
- *   GREEN  -> unido y operativo
- *   BLUE   -> ventana permit-join abierta
- */
 #define LED_R_RED    64
 #define LED_G_RED     0
 #define LED_B_RED     0
@@ -101,61 +93,57 @@ static void configure_led(void)
 /* =========================================================================
  * ZCL On/Off cluster -- command -> gesture mapping
  *
- *   Off    (0x00)  -> night mode OFF  (LED visible)
- *   On     (0x01)  -> night mode ON   (LED silenced)
- *   Toggle (0x02)  -> permit-join toggle
+ * EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID fires when the OnOff attribute is
+ * written after On / Off / Toggle command processing.
  *
- * Rationale: On/Off is the most universal ZCL cluster; every coordinator
- * UI exposes it.  Mapping On->silence / Off->restore is intuitive: "turn
- * off" the LED noise at night, "turn on" to see status again.
+ *   attr false (Off) -> night_mode OFF  (LED visible)
+ *   attr true  (On)  -> night_mode ON   (LED silenced)
+ *   Toggle also hits this path after flipping the attribute.
  * ========================================================================= */
-static esp_err_t onoff_action_handler(
+static void onoff_action_handler(
         ezb_zcl_core_action_callback_id_t callback_id,
         void                             *message)
 {
-    if (callback_id != EZB_ZCL_SET_ATTR_VALUE_CB_ID) return ESP_OK;
+    if (callback_id != EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID) return;
 
     ezb_zcl_set_attr_value_message_t *msg =
         (ezb_zcl_set_attr_value_message_t *)message;
 
-    /* Only care about On/Off cluster, attribute 0x0000 (OnOff bool) */
-    if (msg->info.cluster != EZB_ZCL_CLUSTER_ID_ON_OFF) return ESP_OK;
-    if (msg->attribute.id  != EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID) return ESP_OK;
+    if (msg->info.cluster_id != EZB_ZCL_CLUSTER_ID_ON_OFF) return;
+    if (msg->attr.id         != EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID) return;
 
-    bool on = *(bool *)msg->attribute.data.value;
-    ESP_LOGI(TAG, "On/Off attr -> %s => %s",
-             on ? "ON" : "OFF",
-             on ? "night_mode ON" : "night_mode OFF");
+    bool on = *(bool *)msg->attr.data.value;
+    ESP_LOGI(TAG, "On/Off attr -> %s => night_mode %s",
+             on ? "ON" : "OFF", on ? "ON" : "OFF");
     button_remote_trigger(BUTTON_ACTION_NIGHT_MODE);
-    return ESP_OK;
 }
 
 /* =========================================================================
  * ZCL Level Control cluster -- command -> gesture mapping
  *
- *   MoveToLevel (any level value)  -> tx_toggle  (8 dBm <-> 20 dBm)
- *
- * Rationale: "dim up" = boost TX; "dim down" = back to normal.
- * Any non-zero level triggers the toggle so the coordinator slider
- * behaves predictably regardless of current level value.
+ * EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID fires when CurrentLevel attribute
+ * is written after MoveToLevel / Move / Step commands.
+ * Any level change -> tx_toggle.
  * ========================================================================= */
-static esp_err_t levelctrl_action_handler(
+static void levelctrl_action_handler(
         ezb_zcl_core_action_callback_id_t callback_id,
         void                             *message)
 {
-    if (callback_id != EZB_ZCL_LEVEL_CONTROL_MOVE_TO_LEVEL_CB_ID) return ESP_OK;
+    if (callback_id != EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID) return;
 
-    ezb_zcl_level_move_to_level_message_t *msg =
-        (ezb_zcl_level_move_to_level_message_t *)message;
-    (void)msg;
+    ezb_zcl_set_attr_value_message_t *msg =
+        (ezb_zcl_set_attr_value_message_t *)message;
 
-    ESP_LOGI(TAG, "Level MoveToLevel => tx_toggle");
+    if (msg->info.cluster_id != EZB_ZCL_CLUSTER_ID_LEVEL_CONTROL) return;
+    if (msg->attr.id         != EZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID) return;
+
+    uint8_t level = *(uint8_t *)msg->attr.data.value;
+    ESP_LOGI(TAG, "Level attr -> %u => tx_toggle", level);
     button_remote_trigger(BUTTON_ACTION_TX_TOGGLE);
-    return ESP_OK;
 }
 
 /* =========================================================================
- * ZCL custom cluster 0xFC00 -- direct gesture commands (unchanged)
+ * ZCL custom cluster 0xFC00 -- direct gesture commands
  * ========================================================================= */
 static ezb_zcl_status_t gesture_process_cmd(
         const ezb_zcl_cmd_hdr_t *hdr,
@@ -212,13 +200,12 @@ static void gesture_cluster_init(uint8_t ep_id)
 static void gesture_cluster_deinit(uint8_t ep_id) { (void)ep_id; }
 
 /* =========================================================================
- * ZCL core action handler -- routes On/Off, Level, Default Response
+ * ZCL core action handler
  * ========================================================================= */
 static void zcl_core_action_handler(
         ezb_zcl_core_action_callback_id_t callback_id,
         void                             *message)
 {
-    /* Delegate to per-cluster handlers; each returns ESP_OK if irrelevant. */
     onoff_action_handler(callback_id, message);
     levelctrl_action_handler(callback_id, message);
 
@@ -230,21 +217,7 @@ static void zcl_core_action_handler(
 }
 
 /* =========================================================================
- * Endpoint registration
- *
- * Device type: 0x010C  Color Temperature Light
- *   - Universally recognised by ZHA, zigbee2mqtt, and Tuya gateways.
- *   - Generates a native light control UI with On/Off toggle and
- *     brightness/colour-temp sliders -- we repurpose those controls
- *     to drive the router gestures (see handler comments above).
- *
- * Cluster layout (server side):
- *   0x0000  Basic          -- mandatory, exposes manufacturer/model/fw
- *   0x0003  Identify       -- mandatory per ZCL HA spec
- *   0x0006  On/Off         -- UI toggle; maps to night-mode & permit-join
- *   0x0008  Level Control  -- UI slider; maps to tx_toggle
- *   0x0300  Color Control  -- required by 0x010C device type
- *   0xFC00  Gesture        -- manufacturer-specific direct control
+ * Endpoint registration -- Color Temperature Light (0x010C)
  * ========================================================================= */
 static esp_err_t register_router_endpoint(void)
 {
@@ -256,7 +229,7 @@ static esp_err_t register_router_endpoint(void)
     ezb_af_ep_config_t ep_config = {
         .ep_id              = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
         .app_profile_id     = EZB_AF_HA_PROFILE_ID,
-        .app_device_id      = EZB_AF_HA_COLOR_TEMPERATURE_LIGHT_DEVICE_ID,
+        .app_device_id      = 0x010C,   /* HA Color Temperature Light */
         .app_device_version = 0,
     };
     ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
@@ -293,14 +266,10 @@ static esp_err_t register_router_endpoint(void)
         if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    /* --- On/Off cluster (server)
-     *     On  -> night_mode ON  (LED silenced)
-     *     Off -> night_mode OFF (LED visible)
-     *     Toggle -> permit_join toggle
-     * --- */
+    /* --- On/Off cluster (server) --- */
     {
         ezb_zcl_on_off_cluster_server_config_t cfg = {
-            .on_off = false,   /* initial state: LED visible (not silenced) */
+            .on_off = false,
         };
         ezb_zcl_cluster_desc_t d = ezb_zcl_on_off_create_cluster_desc(
                 &cfg, EZB_ZCL_CLUSTER_SERVER);
@@ -309,17 +278,10 @@ static esp_err_t register_router_endpoint(void)
         if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    /* --- Level Control cluster (server)
-     *     MoveToLevel (any value) -> tx_toggle (8 dBm <-> 20 dBm)
-     * --- */
+    /* --- Level Control cluster (server) --- */
     {
         ezb_zcl_level_cluster_server_config_t cfg = {
-            .current_level    = 127,
-            .remaining_time   = 0,
-            .min_level        = 0,
-            .max_level        = 254,
-            .on_level         = 127,
-            .on_off_trans_time = 0,
+            .current_level = 127,
         };
         ezb_zcl_cluster_desc_t d = ezb_zcl_level_create_cluster_desc(
                 &cfg, EZB_ZCL_CLUSTER_SERVER);
@@ -328,18 +290,12 @@ static esp_err_t register_router_endpoint(void)
         if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    /* --- Color Control cluster (server)
-     *     Required by HA device type 0x010C.
-     *     MoveToColorTemperature -> tx_toggle (mirrors level slider)
-     * --- */
+    /* --- Color Control cluster (server, required by device type 0x010C) --- */
     {
         ezb_zcl_color_control_cluster_server_config_t cfg = {
-            .color_mode             = EZB_ZCL_COLOR_CONTROL_COLOR_MODE_COLOR_TEMPERATURE,
-            .color_temperature_mireds = 370,   /* ~2700 K warm white */
-            .color_temp_physical_min  = 153,   /* 6500 K cool white  */
-            .color_temp_physical_max  = 500,   /* 2000 K warm white  */
-            .options                  = 0,
-            .num_primaries            = 0,
+            .color_mode          = EZB_ZCL_COLOR_CONTROL_COLOR_MODE_COLOR_TEMPERATURE_MIREDS,
+            .options             = 0,
+            .number_of_primaries = 0,
         };
         ezb_zcl_cluster_desc_t d = ezb_zcl_color_control_create_cluster_desc(
                 &cfg, EZB_ZCL_CLUSTER_SERVER);
@@ -348,7 +304,7 @@ static esp_err_t register_router_endpoint(void)
         if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    /* --- Gesture control cluster 0xFC00 (server, unchanged) --- */
+    /* --- Gesture control cluster 0xFC00 (server) --- */
     {
         ezb_zcl_custom_cluster_config_t cfg = {
             .cluster_id  = ROUTER_GESTURE_CLUSTER_ID,
@@ -370,12 +326,9 @@ static esp_err_t register_router_endpoint(void)
 
     ezb_zcl_core_action_handler_register(zcl_core_action_handler);
 
-    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x (Color Temp Light) fw=%s",
-             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID,
-             EZB_AF_HA_COLOR_TEMPERATURE_LIGHT_DEVICE_ID, ESP_SW_BUILD_ID + 1);
-    ESP_LOGI(TAG, "  On/Off ON   -> night mode ON  (LED silenced)");
-    ESP_LOGI(TAG, "  On/Off OFF  -> night mode OFF (LED visible)");
-    ESP_LOGI(TAG, "  On/Off Toggle -> permit-join toggle");
+    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x010C fw=%s",
+             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID, ESP_SW_BUILD_ID + 1);
+    ESP_LOGI(TAG, "  On/Off toggle -> night mode toggle");
     ESP_LOGI(TAG, "  Level slider  -> TX power toggle (8 <-> 20 dBm)");
     ESP_LOGI(TAG, "  Cluster 0xFC00 cmd 0x01-0x04 -> direct gesture");
     return ESP_OK;
@@ -476,13 +429,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
             if (steering_retry_pending) break;
             ESP_LOGW(TAG, "Steering fallo (%s / 0x%02x). Reintento en %ums...",
                      bdb_status_to_str(status), status, ROUTER_STEERING_RETRY_MS);
-            if (status == EZB_BDB_STATUS_NO_NETWORK) {
-                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
-            } else if (status == EZB_BDB_STATUS_NOT_PERMITTED) {
-                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
-            } else if (status == EZB_BDB_STATUS_TARGET_FAILURE) {
-                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
-            }
+            SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
             if (!steering_retry_pending) {
                 alarm_timer_arg_t next_mode = EZB_BDB_MODE_NETWORK_STEERING;
                 if (status == EZB_BDB_STATUS_NO_NETWORK && retry_with_initialization) {
