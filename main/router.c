@@ -13,6 +13,12 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/identify_desc.h"
+#include "ezbee/zcl/cluster/on_off_desc.h"
+#include "ezbee/zcl/cluster/level_desc.h"
+#include "ezbee/zcl/cluster/color_control_desc.h"
+#include "ezbee/zcl/cluster/custom.h"
+#include "ezbee/zcl/zcl_common.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,27 +31,6 @@ static const char *TAG = "ROUTER ESP32C6";
 
 #define LED_ESTADO_GPIO 8
 
-/* Colores del LED de estado (R, G, B) -- valores 0-255.
- *
- * Semantica operacional:
- *   RED    -> error / fuera de red
- *   AMBER  -> buscando red / join en progreso
- *   GREEN  -> unido y operativo
- *   BLUE   -> ventana permit-join abierta
- *
- * Colores de feedback de gestos (button.c):
- *   BRIGHT_RED (255,0,0)   -> TX boost 20 dBm activo
- *   SOFT_BLUE  (0,0,64)    -> TX normal 8 dBm activo
- *   MAGENTA    (255,0,255) -> accion destructiva en curso
- *
- * Night mode (button single-tap): todos los set_led() son silenciados
- * mientras button_is_night_mode() devuelva true.
- *
- * NOTA: Las macros LED_* se usan SOLO en comentarios y como referencia de
- * valores; NO se pasan como argumento a SET_LED_IF_AWAKE porque el
- * preprocesador de C no divide un argumento de macro en varios parametros
- * aunque se expanda a una lista separada por comas.  Los valores r,g,b se
- * escriben siempre de forma explicita en cada llamada. */
 #define LED_R_RED    64
 #define LED_G_RED     0
 #define LED_B_RED     0
@@ -62,9 +47,6 @@ static const char *TAG = "ROUTER ESP32C6";
 #define LED_G_AMBER   7
 #define LED_B_AMBER   0
 
-/* Helper macro: skips the LED update when night mode is active.
- * Only applies to Zigbee state transitions; button gesture feedback
- * in button.c bypasses this guard intentionally (the user triggered it). */
 #define SET_LED_IF_AWAKE(r, g, b) \
     do { if (!button_is_night_mode()) { set_led((r), (g), (b)); } } while (0)
 
@@ -108,90 +90,249 @@ static void configure_led(void)
     led_strip_clear(led_strip);
 }
 
+/* =========================================================================
+ * ZCL On/Off cluster -- command -> gesture mapping
+ *
+ * EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID fires when the OnOff attribute is
+ * written after On / Off / Toggle command processing.
+ *
+ * Struct layout (zcl_common.h):
+ *   ezb_zcl_set_attr_value_message_t {
+ *       ezb_zcl_message_info_t info;
+ *       struct { ezb_zcl_attribute_t attribute; } in;
+ *       struct { ezb_zcl_status_t result;        } out;
+ *   }
+ * ========================================================================= */
+static void onoff_action_handler(
+        ezb_zcl_core_action_callback_id_t callback_id,
+        void                             *message)
+{
+    if (callback_id != EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID) return;
+
+    ezb_zcl_set_attr_value_message_t *msg =
+        (ezb_zcl_set_attr_value_message_t *)message;
+
+    if (msg->info.cluster_id        != EZB_ZCL_CLUSTER_ID_ON_OFF)       return;
+    if (msg->in.attribute.id        != EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID)   return;
+
+    bool on = *(bool *)msg->in.attribute.data.value;
+    ESP_LOGI(TAG, "On/Off attr -> %s => night_mode %s",
+             on ? "ON" : "OFF", on ? "ON" : "OFF");
+    button_remote_trigger(BUTTON_ACTION_NIGHT_MODE);
+}
+
+/* =========================================================================
+ * ZCL Level Control cluster -- command -> gesture mapping
+ *
+ * Cluster ID : EZB_ZCL_CLUSTER_ID_LEVEL            (zcl_type.h, 0x0008)
+ * Attr   ID  : EZB_ZCL_ATTR_LEVEL_CURRENT_LEVEL_ID (level_desc.h, 0x0000)
+ * ========================================================================= */
+static void levelctrl_action_handler(
+        ezb_zcl_core_action_callback_id_t callback_id,
+        void                             *message)
+{
+    if (callback_id != EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID) return;
+
+    ezb_zcl_set_attr_value_message_t *msg =
+        (ezb_zcl_set_attr_value_message_t *)message;
+
+    if (msg->info.cluster_id != EZB_ZCL_CLUSTER_ID_LEVEL)               return;
+    if (msg->in.attribute.id != EZB_ZCL_ATTR_LEVEL_CURRENT_LEVEL_ID)    return;
+
+    uint8_t level = *(uint8_t *)msg->in.attribute.data.value;
+    ESP_LOGI(TAG, "Level attr -> %u => tx_toggle", level);
+    button_remote_trigger(BUTTON_ACTION_TX_TOGGLE);
+}
+
+/* =========================================================================
+ * ZCL custom cluster 0xFC00 -- direct gesture commands
+ * ========================================================================= */
+static ezb_zcl_status_t gesture_process_cmd(
+        const ezb_zcl_cmd_hdr_t *hdr,
+        const uint8_t           *payload,
+        uint16_t                 payload_len)
+{
+    (void)payload;
+    (void)payload_len;
+
+    if (EZB_ZCL_CMD_FC_IS_TO_CLI_DIRECTION(hdr->fc)) {
+        return EZB_ZCL_STATUS_INVALID_FIELD;
+    }
+
+    ESP_LOGI(TAG, "Gesture cmd 0x%02x from 0x%04x ep%u",
+             hdr->cmd_id, hdr->src_addr.u.short_addr, hdr->src_ep);
+
+    esp_err_t err = button_remote_trigger((button_action_t)hdr->cmd_id);
+    if (err == ESP_ERR_INVALID_ARG) {
+        ESP_LOGW(TAG, "Unknown gesture cmd 0x%02x -- UNSUP_CMD", hdr->cmd_id);
+        return EZB_ZCL_STATUS_UNSUP_CMD;
+    }
+    return EZB_ZCL_STATUS_SUCCESS;
+}
+
+static uint8_t gesture_disc_cmd(bool is_recv, uint8_t **list)
+{
+    static uint8_t recv_cmds[] = {
+        ROUTER_CMD_NIGHT_MODE_TOGGLE,
+        ROUTER_CMD_PERMIT_JOIN,
+        ROUTER_CMD_TX_TOGGLE,
+        ROUTER_CMD_FACTORY_RESET,
+    };
+    static uint8_t send_cmds[] = {};
+    if (is_recv) { *list = recv_cmds; return sizeof(recv_cmds); }
+    *list = send_cmds; return 0;
+}
+
+static void gesture_cluster_init(uint8_t ep_id)
+{
+    (void)ep_id;
+    ezb_zcl_custom_cluster_handlers_t handlers = {
+        .cluster_id     = ROUTER_GESTURE_CLUSTER_ID,
+        .cluster_role   = EZB_ZCL_CLUSTER_SERVER,
+        .process_cmd_cb = gesture_process_cmd,
+        .check_value_cb = NULL,
+        .write_attr_cb  = NULL,
+        .cmd_disc_cb    = gesture_disc_cmd,
+    };
+    ezb_zcl_custom_cluster_handlers_register(&handlers);
+    ESP_LOGI(TAG, "Gesture cluster 0x%04x ready on ep%u",
+             ROUTER_GESTURE_CLUSTER_ID, ep_id);
+}
+
+static void gesture_cluster_deinit(uint8_t ep_id) { (void)ep_id; }
+
+/* =========================================================================
+ * ZCL core action handler
+ * ========================================================================= */
+static void zcl_core_action_handler(
+        ezb_zcl_core_action_callback_id_t callback_id,
+        void                             *message)
+{
+    onoff_action_handler(callback_id, message);
+    levelctrl_action_handler(callback_id, message);
+
+    if (callback_id == EZB_ZCL_CORE_DEFAULT_RSP_CB_ID) {
+        ezb_zcl_cmd_default_rsp_message_t *rsp =
+            (ezb_zcl_cmd_default_rsp_message_t *)message;
+        ESP_LOGI(TAG, "ZCL Default Response: status=0x%02x", rsp->in.status_code);
+    }
+}
+
+/* =========================================================================
+ * Endpoint registration -- Color Temperature Light (0x010C)
+ * ========================================================================= */
 static esp_err_t register_router_endpoint(void)
 {
     esp_err_t ret = ESP_OK;
 
     ezb_af_device_desc_t dev_desc = ezb_af_create_device_desc();
-    if (!dev_desc) {
-        ESP_LOGE(TAG, "No se pudo crear device_desc");
-        return ESP_ERR_NO_MEM;
-    }
+    if (!dev_desc) return ESP_ERR_NO_MEM;
 
     ezb_af_ep_config_t ep_config = {
         .ep_id              = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
         .app_profile_id     = EZB_AF_HA_PROFILE_ID,
-        .app_device_id      = 0x0008,
+        .app_device_id      = 0x010C,   /* HA Color Temperature Light */
         .app_device_version = 0,
     };
     ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
-    if (!ep_desc) {
-        ESP_LOGE(TAG, "No se pudo crear ep_desc");
-        ret = ESP_ERR_NO_MEM;
-        goto cleanup_dev;
+    if (!ep_desc) { ret = ESP_ERR_NO_MEM; goto cleanup_dev; }
+
+    /* --- Basic cluster (server) --- */
+    {
+        ezb_zcl_basic_cluster_server_config_t cfg = {
+            .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
+            .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
+        };
+        ezb_zcl_cluster_desc_t d = ezb_zcl_basic_create_cluster_desc(
+                &cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!d) { ret = ESP_ERR_NO_MEM; goto cleanup_ep; }
+        ezb_zcl_basic_cluster_desc_add_attr(d, EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
+                (const void *)ESP_MANUFACTURER_NAME);
+        ezb_zcl_basic_cluster_desc_add_attr(d, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
+                (const void *)ESP_MODEL_IDENTIFIER);
+        ezb_zcl_basic_cluster_desc_add_attr(d, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,
+                (const void *)ESP_SW_BUILD_ID);
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, d);
+        if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    ezb_zcl_basic_cluster_server_config_t basic_cfg = {
-        .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
-        .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
-    };
-    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_create_cluster_desc(
-            &basic_cfg, EZB_ZCL_CLUSTER_SERVER);
-    if (!basic_desc) {
-        ESP_LOGE(TAG, "No se pudo crear Basic cluster desc");
-        ret = ESP_ERR_NO_MEM;
-        goto cleanup_ep;
+    /* --- Identify cluster (server) --- */
+    {
+        ezb_zcl_identify_cluster_server_config_t cfg = {
+            .identify_time = EZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE,
+        };
+        ezb_zcl_cluster_desc_t d = ezb_zcl_identify_create_cluster_desc(
+                &cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!d) { ret = ESP_ERR_NO_MEM; goto cleanup_ep; }
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, d);
+        if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
-            (const void *)ESP_MANUFACTURER_NAME);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ManufacturerName: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
+    /* --- On/Off cluster (server) --- */
+    {
+        ezb_zcl_on_off_cluster_server_config_t cfg = {
+            .on_off = false,
+        };
+        ezb_zcl_cluster_desc_t d = ezb_zcl_on_off_create_cluster_desc(
+                &cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!d) { ret = ESP_ERR_NO_MEM; goto cleanup_ep; }
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, d);
+        if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
-            (const void *)ESP_MODEL_IDENTIFIER);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ModelIdentifier: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
+    /* --- Level Control cluster (server) --- */
+    {
+        ezb_zcl_level_cluster_server_config_t cfg = {
+            .current_level = 127,
+        };
+        ezb_zcl_cluster_desc_t d = ezb_zcl_level_create_cluster_desc(
+                &cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!d) { ret = ESP_ERR_NO_MEM; goto cleanup_ep; }
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, d);
+        if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,   /* correct SDK symbol name */
-            (const void *)ESP_SW_BUILD_ID);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir SWBuildID: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
+    /* --- Color Control cluster (server, required by device type 0x010C) --- */
+    {
+        ezb_zcl_color_control_cluster_server_config_t cfg = {
+            .color_mode          = EZB_ZCL_COLOR_CONTROL_COLOR_MODE_COLOR_TEMPERATURE_MIREDS,
+            .options             = 0,
+            .number_of_primaries = 0,
+        };
+        ezb_zcl_cluster_desc_t d = ezb_zcl_color_control_create_cluster_desc(
+                &cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!d) { ret = ESP_ERR_NO_MEM; goto cleanup_ep; }
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, d);
+        if (ret != ESP_OK) goto cleanup_ep;
     }
 
-    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
+    /* --- Gesture control cluster 0xFC00 (server) --- */
+    {
+        ezb_zcl_custom_cluster_config_t cfg = {
+            .cluster_id  = ROUTER_GESTURE_CLUSTER_ID,
+            .init_func   = gesture_cluster_init,
+            .deinit_func = gesture_cluster_deinit,
+        };
+        ezb_zcl_cluster_desc_t d = ezb_zcl_custom_create_cluster_desc(
+                &cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!d) { ret = ESP_ERR_NO_MEM; goto cleanup_ep; }
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, d);
+        if (ret != ESP_OK) goto cleanup_ep;
     }
 
     ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
-        goto cleanup_dev;
-    }
+    if (ret != ESP_OK) goto cleanup_dev;
 
     ret = ezb_af_device_desc_register(dev_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo registrar device desc: %s", esp_err_to_name(ret));
-        goto cleanup_dev;
-    }
+    if (ret != ESP_OK) goto cleanup_dev;
 
-    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x "
-                  "(range_extender, fw=%s)",
-             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID,
-             0x0008, ESP_SW_BUILD_ID + 1);  /* +1 skips ZCL length byte */
+    ezb_zcl_core_action_handler_register(zcl_core_action_handler);
+
+    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x010C fw=%s",
+             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID, ESP_SW_BUILD_ID + 1);
+    ESP_LOGI(TAG, "  On/Off toggle -> night mode toggle");
+    ESP_LOGI(TAG, "  Level slider  -> TX power toggle (8 <-> 20 dBm)");
+    ESP_LOGI(TAG, "  Cluster 0xFC00 cmd 0x01-0x04 -> direct gesture");
     return ESP_OK;
 
 cleanup_ep:
@@ -247,7 +388,7 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 
     switch (signal_type) {
     case EZB_ZDO_SIGNAL_SKIP_STARTUP:
-        ESP_LOGI(TAG, "Inicializando Router Zigbee Puro...");
+        ESP_LOGI(TAG, "Inicializando Router Zigbee...");
         ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_INITIALIZATION);
         SET_LED_IF_AWAKE(LED_R_RED, LED_G_RED, LED_B_RED);
         break;
@@ -268,7 +409,6 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
                 SET_LED_IF_AWAKE(LED_R_GREEN, LED_G_GREEN, LED_B_GREEN);
                 ezb_zdo_device_annce_req_t annce = {.cb = NULL, .user_ctx = NULL};
                 ezb_zdo_device_annce_req(&annce);
-                ESP_LOGI(TAG, "Device Announce enviado (rejoin)");
             }
         } else {
             ESP_LOGW(TAG, "BDB init fallo (%s / 0x%02x). Reintento en %ums...",
@@ -288,23 +428,10 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
             alarm_timer_schedule(send_device_announce, 0, 3000);
             alarm_timer_schedule(send_device_announce, 0, 8000);
         } else {
-            if (steering_retry_pending) {
-                break;
-            }
+            if (steering_retry_pending) break;
             ESP_LOGW(TAG, "Steering fallo (%s / 0x%02x). Reintento en %ums...",
                      bdb_status_to_str(status), status, ROUTER_STEERING_RETRY_MS);
-            if (status == EZB_BDB_STATUS_NO_NETWORK) {
-                ESP_LOGW(TAG, "No se encontro red Zigbee: verificar coordinador en modo emparejamiento y dentro de rango");
-                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
-            } else if (status == EZB_BDB_STATUS_NOT_PERMITTED) {
-                ESP_LOGW(TAG, "Join no permitido por el coordinador (permit join cerrado)");
-                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
-            } else if (status == EZB_BDB_STATUS_TARGET_FAILURE) {
-                ESP_LOGW(TAG, "Fallo de join: el coordinador rechazo la solicitud de join");
-                SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
-            } else if (status == EZB_BDB_STATUS_TCLK_EX_FAILURE) {
-                ESP_LOGW(TAG, "Fallo intercambio de Trust Center Link Key");
-            }
+            SET_LED_IF_AWAKE(LED_R_AMBER, LED_G_AMBER, LED_B_AMBER);
             if (!steering_retry_pending) {
                 alarm_timer_arg_t next_mode = EZB_BDB_MODE_NETWORK_STEERING;
                 if (status == EZB_BDB_STATUS_NO_NETWORK && retry_with_initialization) {
@@ -354,23 +481,18 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
 
-    /* TX power: arrancar a LOW (8 dBm), potencia de trabajo normal.
-     * Triple-tap del boton BOOT alterna entre LOW (8) y HIGH (20) dBm. */
     int8_t tx_power_dbm = ROUTER_TX_POWER_LOW_DBM;
     esp_err_t pw_err = esp_ieee802154_set_txpower(tx_power_dbm);
     if (pw_err != ESP_OK) {
         ESP_LOGW(TAG, "No se pudo fijar TX power a %d dBm: %s",
                  tx_power_dbm, esp_err_to_name(pw_err));
     } else {
-        ESP_LOGI(TAG, "TX power fijado a %d dBm (normal de trabajo)", tx_power_dbm);
+        ESP_LOGI(TAG, "TX power fijado a %d dBm", tx_power_dbm);
     }
 
     ezb_aps_secur_enable_distributed_security(false);
     ezb_secur_set_global_link_key(s_tc_link_key);
     ESP_ERROR_CHECK(ezb_secur_set_tclk_exchange_required(true));
-    ESP_LOGI(TAG, "Canales: primary=0x%08lx secondary=0x%08lx",
-             (unsigned long)ESP_ZIGBEE_PRIMARY_CHANNEL_MASK,
-             (unsigned long)ESP_ZIGBEE_SECONDARY_CHANNEL_MASK);
     ezb_nwk_set_min_join_lqi(0);
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
