@@ -13,6 +13,7 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/custom_cluster.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -108,6 +109,26 @@ static void configure_led(void)
     led_strip_clear(led_strip);
 }
 
+/* -------------------------------------------------------------------------
+ * ZCL custom cluster command handler
+ *
+ * Called by the Zigbee stack when a command is received on cluster
+ * ROUTER_MANUF_CLUSTER_ID (0xFC00).  Maps command IDs to the same
+ * gesture actions triggered by the physical button.
+ * ---------------------------------------------------------------------- */
+static bool remote_gesture_cmd_handler(const ezb_zcl_cmd_info_t *cmd_info)
+{
+    uint8_t cmd_id = ezb_zcl_cmd_info_get_command_id(cmd_info);
+    ESP_LOGI(TAG, "Remote gesture cmd received: 0x%02x", cmd_id);
+
+    esp_err_t err = button_remote_trigger((button_action_t)cmd_id);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Unknown remote gesture cmd 0x%02x -- ignored", cmd_id);
+        return false;  /* stack will send Default Response: UNSUP_CLUSTER_COMMAND */
+    }
+    return true;       /* stack will send Default Response: SUCCESS */
+}
+
 static esp_err_t register_router_endpoint(void)
 {
     esp_err_t ret = ESP_OK;
@@ -131,6 +152,7 @@ static esp_err_t register_router_endpoint(void)
         goto cleanup_dev;
     }
 
+    /* --- Basic cluster (server) --- */
     ezb_zcl_basic_cluster_server_config_t basic_cfg = {
         .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
         .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
@@ -163,7 +185,7 @@ static esp_err_t register_router_endpoint(void)
 
     ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
-            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,   /* correct SDK symbol name */
+            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,
             (const void *)ESP_SW_BUILD_ID);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo anadir SWBuildID: %s", esp_err_to_name(ret));
@@ -173,6 +195,38 @@ static esp_err_t register_router_endpoint(void)
     ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    /* --- Manufacturer-specific cluster 0xFC00 (server) --- */
+    ezb_zcl_custom_cluster_handlers_t manuf_handlers = {
+        .cluster_id        = ROUTER_MANUF_CLUSTER_ID,
+        .cluster_role      = EZB_ZCL_CLUSTER_SERVER,
+        .manufacturer_code = ROUTER_MANUF_CODE,
+        .process_cmd_cb    = remote_gesture_cmd_handler,
+    };
+    ret = ezb_zcl_custom_cluster_handlers_register(&manuf_handlers);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo registrar handlers del cluster 0x%04x: %s",
+                 ROUTER_MANUF_CLUSTER_ID, esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    ezb_zcl_cluster_desc_t manuf_desc =
+        ezb_zcl_custom_cluster_create(ROUTER_MANUF_CLUSTER_ID,
+                                      ROUTER_MANUF_CODE,
+                                      EZB_ZCL_CLUSTER_SERVER);
+    if (!manuf_desc) {
+        ESP_LOGE(TAG, "No se pudo crear custom cluster desc 0x%04x",
+                 ROUTER_MANUF_CLUSTER_ID);
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_ep;
+    }
+
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, manuf_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir custom cluster al endpoint: %s",
+                 esp_err_to_name(ret));
         goto cleanup_ep;
     }
 
@@ -191,7 +245,11 @@ static esp_err_t register_router_endpoint(void)
     ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x "
                   "(range_extender, fw=%s)",
              ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID,
-             0x0008, ESP_SW_BUILD_ID + 1);  /* +1 skips ZCL length byte */
+             0x0008, ESP_SW_BUILD_ID + 1);
+    ESP_LOGI(TAG, "Custom cluster 0x%04x (manuf 0x%04x) registrado:"
+                  " cmds 0x01=night_mode 0x02=permit_join"
+                  " 0x03=tx_toggle 0x04=factory_reset",
+             ROUTER_MANUF_CLUSTER_ID, ROUTER_MANUF_CODE);
     return ESP_OK;
 
 cleanup_ep:
@@ -354,8 +412,6 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
 
-    /* TX power: arrancar a LOW (8 dBm), potencia de trabajo normal.
-     * Triple-tap del boton BOOT alterna entre LOW (8) y HIGH (20) dBm. */
     int8_t tx_power_dbm = ROUTER_TX_POWER_LOW_DBM;
     esp_err_t pw_err = esp_ieee802154_set_txpower(tx_power_dbm);
     if (pw_err != ESP_OK) {
