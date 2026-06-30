@@ -13,6 +13,8 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/on_off.h"
+#include "ezbee/zcl/zcl_common.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -80,6 +82,66 @@ _Static_assert(sizeof(s_tc_link_key) == ESP_ZIGBEE_TC_LINK_KEY_LEN,
 static _Atomic bool steering_retry_pending;
 static _Atomic bool retry_with_initialization = false;
 
+/* Forward declarations of button actions (defined in button.c, declared
+ * extern here to avoid adding them to button.h -- they are implementation
+ * details of button.c that router.c invokes on behalf of the coordinator). */
+extern void do_night_mode_toggle(void);
+extern void do_permit_join(void);
+extern void do_tx_toggle(void);
+extern void do_factory_reset(void);
+
+/* -------------------------------------------------------------------------
+ * ZCL command handler
+ *
+ * Registered via ezb_zcl_register_cmd_handler() -- called by the stack for
+ * every inbound ZCL command addressed to this device.
+ *
+ * We only handle cluster 0x0006 (OnOff) commands. Any command to one of
+ * the 4 gesture endpoints (On=0x01, Off=0x00, Toggle=0x02) triggers the
+ * corresponding action.  The coordinator (iHost / Node-RED) sends Toggle.
+ *
+ * dst_ep identifies which gesture:
+ *   ROUTER_EP_NIGHT (1) -> do_night_mode_toggle()
+ *   ROUTER_EP_JOIN  (2) -> do_permit_join()
+ *   ROUTER_EP_TX    (3) -> do_tx_toggle()
+ *   ROUTER_EP_RESET (4) -> do_factory_reset()
+ *
+ * API verified against ezbee/zcl/zcl_common.h:
+ *   ezb_zcl_cmd_t { .cluster_id, .cmd_id, .cmd_ctrl.dst_ep, ... }
+ *   ezb_zcl_register_cmd_handler(ezb_zcl_cmd_handler_t)
+ *   typedef void (*ezb_zcl_cmd_handler_t)(ezb_zcl_cmd_t *)
+ * ---------------------------------------------------------------------- */
+#define ZCL_CLUSTER_ON_OFF  0x0006U
+
+static void zcl_cmd_handler(ezb_zcl_cmd_t *cmd)
+{
+    if (!cmd) return;
+    if (cmd->cluster_id != ZCL_CLUSTER_ON_OFF) return;
+
+    /* cmd->cmd_ctrl.dst_ep is the destination endpoint on this device */
+    uint8_t ep = cmd->cmd_ctrl.dst_ep;
+
+    ESP_LOGI(TAG, "ZCL OnOff cluster cmd=0x%02x ep=%u", cmd->cmd_id, ep);
+
+    switch (ep) {
+    case ROUTER_EP_NIGHT:
+        do_night_mode_toggle();
+        break;
+    case ROUTER_EP_JOIN:
+        do_permit_join();
+        break;
+    case ROUTER_EP_TX:
+        do_tx_toggle();
+        break;
+    case ROUTER_EP_RESET:
+        do_factory_reset();
+        break;
+    default:
+        ESP_LOGW(TAG, "ZCL OnOff ep=%u not mapped, ignored", ep);
+        break;
+    }
+}
+
 void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
     led_strip_set_pixel(led_strip, 0, r, g, b);
@@ -108,7 +170,131 @@ static void configure_led(void)
     led_strip_clear(led_strip);
 }
 
-static esp_err_t register_router_endpoint(void)
+/* -------------------------------------------------------------------------
+ * Helper: create one OnOff server endpoint and add it to dev_desc.
+ *
+ * ep_id     : endpoint number (ROUTER_EP_NIGHT .. ROUTER_EP_RESET)
+ * add_basic : true only for ep 1 -- Basic cluster carries device identity
+ *
+ * API verified against SDK headers:
+ *   ezbee/zcl/cluster/on_off.h
+ *     ezb_zcl_on_off_cluster_server_config_t { bool on_off }
+ *     ezb_zcl_on_off_create_cluster_desc(cfg, EZB_ZCL_CLUSTER_SERVER)
+ *   ezbee/zcl/cluster/basic_desc.h
+ *     ezb_zcl_basic_cluster_server_config_t
+ *     ezb_zcl_basic_create_cluster_desc / ezb_zcl_basic_cluster_desc_add_attr
+ *   ezbee/af.h
+ *     ezb_af_create_endpoint_desc / ezb_af_endpoint_add_cluster_desc
+ *     ezb_af_device_add_endpoint_desc / ezb_af_free_endpoint_desc
+ * ---------------------------------------------------------------------- */
+static esp_err_t add_onoff_endpoint(ezb_af_device_desc_t dev_desc,
+                                    uint8_t ep_id,
+                                    bool    add_basic)
+{
+    esp_err_t ret = ESP_OK;
+
+    ezb_af_ep_config_t ep_cfg = {
+        .ep_id              = ep_id,
+        .app_profile_id     = EZB_AF_HA_PROFILE_ID,
+        .app_device_id      = ROUTER_HA_DEVICE_ID_ON_OFF_LIGHT,
+        .app_device_version = 0,
+    };
+    ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_cfg);
+    if (!ep_desc) {
+        ESP_LOGE(TAG, "ep %u: no se pudo crear ep_desc", ep_id);
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Basic cluster -- only on ep 1 */
+    if (add_basic) {
+        ezb_zcl_basic_cluster_server_config_t basic_cfg = {
+            .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
+            .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
+        };
+        ezb_zcl_cluster_desc_t basic_desc =
+            ezb_zcl_basic_create_cluster_desc(&basic_cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!basic_desc) {
+            ESP_LOGE(TAG, "ep %u: no se pudo crear Basic cluster", ep_id);
+            ret = ESP_ERR_NO_MEM;
+            goto cleanup_ep;
+        }
+
+        struct {
+            uint16_t    attr_id;
+            const void *value;
+        } basic_attrs[] = {
+            { EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, ESP_MANUFACTURER_NAME },
+            { EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,  ESP_MODEL_IDENTIFIER  },
+            { EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,        ESP_SW_BUILD_ID       },
+        };
+        for (size_t i = 0; i < sizeof(basic_attrs)/sizeof(basic_attrs[0]); i++) {
+            ret = ezb_zcl_basic_cluster_desc_add_attr(
+                    basic_desc, basic_attrs[i].attr_id, basic_attrs[i].value);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "ep %u: Basic attr 0x%04x error: %s",
+                         ep_id, basic_attrs[i].attr_id, esp_err_to_name(ret));
+                goto cleanup_ep;
+            }
+        }
+
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "ep %u: no se pudo anadir Basic: %s",
+                     ep_id, esp_err_to_name(ret));
+            goto cleanup_ep;
+        }
+    }
+
+    /* OnOff cluster (server) */
+    ezb_zcl_on_off_cluster_server_config_t onoff_cfg = {
+        .on_off = false,   /* initial state: off */
+    };
+    ezb_zcl_cluster_desc_t onoff_desc =
+        ezb_zcl_on_off_create_cluster_desc(&onoff_cfg, EZB_ZCL_CLUSTER_SERVER);
+    if (!onoff_desc) {
+        ESP_LOGE(TAG, "ep %u: no se pudo crear OnOff cluster", ep_id);
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_ep;
+    }
+
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, onoff_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "ep %u: no se pudo anadir OnOff: %s",
+                 ep_id, esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "ep %u: no se pudo anadir al device_desc: %s",
+                 ep_id, esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    ESP_LOGI(TAG, "ep %u registrado: profile=0x%04x device=0x%04x "
+                  "clusters=[%sOnOff(server)]",
+             ep_id, EZB_AF_HA_PROFILE_ID, ROUTER_HA_DEVICE_ID_ON_OFF_LIGHT,
+             add_basic ? "Basic(server) " : "");
+    return ESP_OK;
+
+cleanup_ep:
+    ezb_af_free_endpoint_desc(ep_desc);
+    return ret;
+}
+
+/**
+ * @brief Registra los 4 endpoints OnOff server y el handler ZCL generico.
+ *
+ * Endpoints:
+ *   ep 1 (ROUTER_EP_NIGHT)  Basic+OnOff  -> do_night_mode_toggle()
+ *   ep 2 (ROUTER_EP_JOIN)   OnOff        -> do_permit_join()
+ *   ep 3 (ROUTER_EP_TX)     OnOff        -> do_tx_toggle()
+ *   ep 4 (ROUTER_EP_RESET)  OnOff        -> do_factory_reset()
+ *
+ * zcl_cmd_handler() se registra una sola vez para todos los endpoints;
+ * filtra por cluster_id=0x0006 y despacha por dst_ep.
+ */
+static esp_err_t register_router_endpoints(void)
 {
     esp_err_t ret = ESP_OK;
 
@@ -118,85 +304,35 @@ static esp_err_t register_router_endpoint(void)
         return ESP_ERR_NO_MEM;
     }
 
-    ezb_af_ep_config_t ep_config = {
-        .ep_id              = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
-        .app_profile_id     = EZB_AF_HA_PROFILE_ID,
-        .app_device_id      = 0x0008,
-        .app_device_version = 0,
-    };
-    ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
-    if (!ep_desc) {
-        ESP_LOGE(TAG, "No se pudo crear ep_desc");
-        ret = ESP_ERR_NO_MEM;
-        goto cleanup_dev;
-    }
+    /* ep 1: Basic + OnOff */
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_NIGHT, true);
+    if (ret != ESP_OK) goto cleanup;
 
-    ezb_zcl_basic_cluster_server_config_t basic_cfg = {
-        .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
-        .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
-    };
-    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_create_cluster_desc(
-            &basic_cfg, EZB_ZCL_CLUSTER_SERVER);
-    if (!basic_desc) {
-        ESP_LOGE(TAG, "No se pudo crear Basic cluster desc");
-        ret = ESP_ERR_NO_MEM;
-        goto cleanup_ep;
-    }
+    /* ep 2-4: OnOff only */
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_JOIN,  false);
+    if (ret != ESP_OK) goto cleanup;
 
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
-            (const void *)ESP_MANUFACTURER_NAME);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ManufacturerName: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_TX,    false);
+    if (ret != ESP_OK) goto cleanup;
 
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
-            (const void *)ESP_MODEL_IDENTIFIER);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ModelIdentifier: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
-
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,   /* correct SDK symbol name */
-            (const void *)ESP_SW_BUILD_ID);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir SWBuildID: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
-
-    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
-
-    ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
-        goto cleanup_dev;
-    }
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_RESET, false);
+    if (ret != ESP_OK) goto cleanup;
 
     ret = ezb_af_device_desc_register(dev_desc);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo registrar device desc: %s", esp_err_to_name(ret));
-        goto cleanup_dev;
+        ESP_LOGE(TAG, "No se pudo registrar device_desc: %s", esp_err_to_name(ret));
+        goto cleanup;
     }
 
-    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x "
-                  "(range_extender, fw=%s)",
-             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID,
-             0x0008, ESP_SW_BUILD_ID + 1);  /* +1 skips ZCL length byte */
+    /* Generic ZCL command handler -- dispatches OnOff commands by dst_ep.
+     * ezb_zcl_register_cmd_handler() is defined in ezbee/zcl/zcl_common.h */
+    ezb_zcl_register_cmd_handler(zcl_cmd_handler);
+
+    ESP_LOGI(TAG, "4 endpoints OnOff registrados (eps 1-4), fw=%s",
+             ESP_SW_BUILD_ID + 1);
     return ESP_OK;
 
-cleanup_ep:
-    ezb_af_free_endpoint_desc(ep_desc);
-cleanup_dev:
+cleanup:
     ezb_af_free_device_desc(dev_desc);
     return ret;
 }
@@ -375,7 +511,8 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
-    ESP_ERROR_CHECK(register_router_endpoint());
+    ESP_ERROR_CHECK(register_router_endpoints());
+
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
 
@@ -391,7 +528,7 @@ void app_main(void)
     ESP_LOGI(TAG, "app_main: antes de init");
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nvs_flash_init_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME));
-    ESP_LOGI(TAG, "Arrancando Router Zigbee Puro");
+    ESP_LOGI(TAG, "Arrancando Router Zigbee Puro -- fw=%s", ESP_SW_BUILD_ID + 1);
 
     BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main",
                                 ZIGBEE_MAIN_TASK_STACK_SIZE, NULL, 5, NULL);

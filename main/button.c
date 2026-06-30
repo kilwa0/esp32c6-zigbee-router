@@ -72,10 +72,10 @@ static void tap_window_cb(TimerHandle_t t);
 static void hold_cb(TimerHandle_t t);
 static void blink_cb(TimerHandle_t t);
 static void pj_expired_cb(TimerHandle_t t);
-static void do_night_mode_toggle(void);
-static void do_permit_join(void);
-static void do_tx_toggle(void);
-static void do_factory_reset(void);
+void do_night_mode_toggle(void);
+void do_permit_join(void);
+void do_tx_toggle(void);
+void do_factory_reset(void);
 static void start_blink(bool fast, uint8_t r, uint8_t g, uint8_t b);
 static void stop_blink(void);
 static void btn_isr(void *arg);
@@ -165,19 +165,17 @@ static void pj_expired_cb(TimerHandle_t t)
 }
 
 /* -------------------------------------------------------------------------
- * Actions
+ * Actions -- also callable from router.c via extern declaration
  * ---------------------------------------------------------------------- */
 
 /**
- * @brief Toggle LED night mode (single-tap).
+ * @brief Toggle LED night mode (single-tap or ep 1 OnOff command).
  *
  * In night mode all Zigbee-state LED updates are suppressed by
  * button_is_night_mode() guards in router.c.  Gesture feedback from
  * button.c is NOT suppressed -- the user explicitly triggered it.
- *
- * @note Volatile; reverts to LED-on on reboot.
  */
-static void do_night_mode_toggle(void)
+void do_night_mode_toggle(void)
 {
     s_night_mode = !s_night_mode;
     if (s_night_mode) {
@@ -190,19 +188,15 @@ static void do_night_mode_toggle(void)
 }
 
 /**
- * @brief Open or close a permit-join window (double-tap).
+ * @brief Open or close a permit-join window (double-tap or ep 2 OnOff command).
  *
- * First double-tap opens a 60 s permit-join window with slow green
- * blink feedback.  A second double-tap while the window is open closes
- * it immediately.  The Zigbee stack is notified via
- * ezb_bdb_open_network(); the pj_timer drives the auto-expiry.
- *
- * @note Volatile; window does not survive a reboot.
+ * First call opens a 60 s permit-join window with slow cyan blink feedback.
+ * A second call while the window is open closes it immediately.
  */
-static void do_permit_join(void)
+void do_permit_join(void)
 {
     if (s_permit_join_active) {
-        /* Second double-tap: close early */
+        /* Second call: close early */
         xTimerStop(s_pj_timer, 0);
         pj_expired_cb(NULL);
         return;
@@ -210,7 +204,7 @@ static void do_permit_join(void)
 
     s_permit_join_active = true;
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    ezb_bdb_open_network(PERMIT_JOIN_S);   /* open permit-join window */
+    ezb_bdb_open_network(PERMIT_JOIN_S);
     esp_zigbee_lock_release();
     ESP_LOGI(TAG, "Permit-join OPEN (%u s)", PERMIT_JOIN_S);
 
@@ -221,7 +215,7 @@ static void do_permit_join(void)
     xTimerReset(s_pj_timer, 0);
 }
 
-static void do_tx_toggle(void)
+void do_tx_toggle(void)
 {
     s_high_power = !s_high_power;
     int8_t pwr = s_high_power ? ROUTER_TX_POWER_HIGH_DBM : ROUTER_TX_POWER_LOW_DBM;
@@ -250,7 +244,7 @@ static void do_tx_toggle(void)
     set_led_locked(_GREEN);
 }
 
-static void do_factory_reset(void)
+void do_factory_reset(void)
 {
     ESP_LOGW(TAG, "Factory reset: erasing NVS partition '%s'",
              ESP_ZIGBEE_STORAGE_PARTITION_NAME);
@@ -346,10 +340,10 @@ esp_err_t button_init(void)
     if (!s_pj_timer) return ESP_ERR_NO_MEM;
 
     ESP_LOGI(TAG, "BOOT button ready (GPIO%d)", BOOT_BTN_GPIO);
-    ESP_LOGI(TAG, "  1x tap   -> night mode toggle (LED on/off)");
-    ESP_LOGI(TAG, "  2x tap   -> permit-join %u s (2nd tap closes early)", PERMIT_JOIN_S);
-    ESP_LOGI(TAG, "  3x tap   -> TX toggle  %d dBm <-> %d dBm",
-             ROUTER_TX_POWER_LOW_DBM, ROUTER_TX_POWER_HIGH_DBM);
-    ESP_LOGI(TAG, "  Hold 5 s -> factory reset (NVS erase + reboot)");
+    ESP_LOGI(TAG, "  1x tap   -> night mode toggle (LED on/off)    [ep %u]", ROUTER_EP_NIGHT);
+    ESP_LOGI(TAG, "  2x tap   -> permit-join %u s (2nd tap closes) [ep %u]", PERMIT_JOIN_S, ROUTER_EP_JOIN);
+    ESP_LOGI(TAG, "  3x tap   -> TX toggle  %d dBm <-> %d dBm     [ep %u]",
+             ROUTER_TX_POWER_LOW_DBM, ROUTER_TX_POWER_HIGH_DBM, ROUTER_EP_TX);
+    ESP_LOGI(TAG, "  Hold 5 s -> factory reset (NVS erase+reboot)  [ep %u]", ROUTER_EP_RESET);
     return ESP_OK;
 }

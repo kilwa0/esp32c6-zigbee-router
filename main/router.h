@@ -10,7 +10,29 @@
 _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
                "Primary channel mask contains invalid 802.15.4 channels");
 
-#define ESP_ZIGBEE_RANGE_EXTENDER_EP_ID   (1)
+/*
+ * Endpoint layout -- 4 endpoints, one per button gesture.
+ *
+ * Each endpoint exposes:
+ *   - Basic cluster (server) on ep 1 only  [device identity]
+ *   - OnOff cluster (server)               [controllable by iHost]
+ *
+ * Device ID 0x0100 = HA On/Off Light -- the iHost recognises this
+ * and exposes a toggle action in the UI for each endpoint.
+ *
+ * Gesture mapping:
+ *   EP_NIGHT   (1) -> do_night_mode_toggle()   single tap
+ *   EP_JOIN    (2) -> do_permit_join()          double tap
+ *   EP_TX      (3) -> do_tx_toggle()            triple tap
+ *   EP_RESET   (4) -> do_factory_reset()        hold 5 s
+ */
+#define ROUTER_EP_NIGHT   1U
+#define ROUTER_EP_JOIN    2U
+#define ROUTER_EP_TX      3U
+#define ROUTER_EP_RESET   4U
+
+/* HA On/Off Light -- Device ID recognised and surfaced by iHost */
+#define ROUTER_HA_DEVICE_ID_ON_OFF_LIGHT  0x0100U
 
 #define ESP_ZIGBEE_TC_LINK_KEY_LEN  16U
 
@@ -25,8 +47,11 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  * SemVer policy:
  *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
  *   MINOR -> non-disruptive feature
- *   PATCH -> bugfix only */
-#define ESP_SW_BUILD_ID       "\x05" "4.0.1"
+ *   PATCH -> bugfix only
+ *
+ * 5.0.0 -- BREAKING: endpoint layout changed from 1x Range Extender to
+ *           4x OnOff Light. Factory reset required after flash. */
+#define ESP_SW_BUILD_ID       "\x05" "5.0.0"
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
