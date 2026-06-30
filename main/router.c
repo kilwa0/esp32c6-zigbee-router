@@ -13,7 +13,7 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
-#include "ezbee/zcl/cluster/custom_cluster.h"
+#include "ezbee/zcl/cluster/custom.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
