@@ -79,3 +79,19 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
     };
 
 #define ROUTER_PERMIT_JOIN_DURATION_S  60U
+
+/**
+ * @brief Report a button gesture to the Zigbee coordinator via
+ *        ZCL Scenes Recall Scene (cluster 0x0005, cmd 0x05).
+ *
+ * Maps button gestures to scene IDs:
+ *   1 -> single tap  (night mode toggle)
+ *   2 -> double tap  (permit-join)
+ *   3 -> triple tap  (TX power toggle)
+ *   4 -> hold 5 s    (factory reset)
+ *
+ * @param scene_id  Gesture index in range [1, 4].
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if scene_id out of range,
+ *         ESP_FAIL if the Zigbee stack call returns an error.
+ */
+esp_err_t router_report_gesture(uint8_t scene_id);
