@@ -13,11 +13,10 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
-#include "ezbee/zcl/cluster/scenes.h"
+#include "ezbee/zcl/cluster/on_off.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
 #include "sdkconfig.h"
 
 #include "router.h"
@@ -83,105 +82,55 @@ static _Atomic bool steering_retry_pending;
 static _Atomic bool retry_with_initialization = false;
 
 /* -------------------------------------------------------------------------
- * Gesture reporting -- ZCL Scenes Recall Scene
+ * ZCL OnOff message handler
+ *
+ * The iHost sends On / Off / Toggle commands to one of the 4 OnOff server
+ * endpoints. Each endpoint maps to a button gesture action:
+ *
+ *   ROUTER_EP_NIGHT  (1) -> do_night_mode_toggle()
+ *   ROUTER_EP_JOIN   (2) -> do_permit_join()
+ *   ROUTER_EP_TX     (3) -> do_tx_toggle()
+ *   ROUTER_EP_RESET  (4) -> do_factory_reset()
+ *
+ * The handler is registered via ezb_zcl_on_off_register_message_handler().
+ * It is called in the Zigbee stack task context -- no lock needed.
+ *
+ * The actual On/Off attribute state is ignored: any command (On, Off, Toggle)
+ * triggers the action. Node-RED or the iHost sends Toggle to trigger a
+ * gesture; the attribute state has no physical meaning here.
+ *
+ * API verified against:
+ *   ezbee/zcl/cluster/on_off.h
+ *   ezbee/zcl/cluster/on_off_desc.h
  * ---------------------------------------------------------------------- */
-
-/**
- * Cola de scene_id pendientes de enviar al coordinador.
- * Capacidad 8: mas que suficiente para cualquier rafaga de gestos.
- * Creada en app_main antes de arrancar la tarea Zigbee.
- */
-static QueueHandle_t s_gesture_queue = NULL;
-
-/**
- * @brief Encola un scene_id para enviarlo como Recall Scene desde la tarea Zigbee.
- *
- * Llamable desde cualquier contexto (timer callback, tarea, ISR).
- * xQueueSend(..., 0) no bloquea: si la cola esta llena se descarta el gesto.
- *
- * @param scene_id  1=night-mode, 2=permit-join, 3=tx-toggle, 4=factory-reset
- * @return ESP_OK en exito, ESP_ERR_* en error
- */
-esp_err_t router_report_gesture(uint8_t scene_id)
+static void on_off_message_handler(ezb_zcl_on_off_message_t *msg)
 {
-    if (scene_id < 1U || scene_id > 4U) {
-        ESP_LOGE("GESTURE", "scene_id %u fuera de rango [1-4]", scene_id);
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!s_gesture_queue) {
-        ESP_LOGE("GESTURE", "cola no inicializada");
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (xQueueSend(s_gesture_queue, &scene_id, 0) != pdTRUE) {
-        ESP_LOGW("GESTURE", "cola llena, gesto %u descartado", scene_id);
-        return ESP_ERR_NO_MEM;
-    }
-    return ESP_OK;
-}
+    if (!msg) return;
+    uint8_t ep = msg->info.src_ep;  /* endpoint the command was sent TO */
 
-/**
- * @brief Drena s_gesture_queue y envia cada gesto como ZCL Scenes Recall Scene.
- *
- * Ejecutada desde gesture_flush_alarm(), que corre en el contexto del stack
- * Zigbee -- el lock ya esta adquirido, no usar esp_zigbee_lock_acquire aqui.
- *
- * Campos verificados en los headers del SDK instalado:
- *
- *   ezbee/zcl/cluster/scenes.h -- ezb_zcl_scenes_recall_scene_cmd_t:
- *     .cmd_ctrl  (ezb_zcl_cluster_cmd_ctrl_t)
- *     .payload.group_id / .payload.scene_id / .payload.transition_time
- *
- *   ezbee/zcl/zcl_common.h -- ezb_zcl_cluster_cmd_ctrl_t:
- *     .dst_addr  (ezb_address_t, NO dst_addr_u)
- *     .dst_ep    (NO dst_endpoint)
- *     .src_ep    (NO src_endpoint)
- *     .dis_default_rsp (bool)
- *
- *   ezbee/core_types.h -- ezb_address_t:
- *     { .addr_mode, .u.short_addr }
- *     Macro de conveniencia: EZB_ADDRESS_SHORT(addr)
- *
- *   ezbee/error.h -- codigo de exito: EZB_ERR_NONE (= 0), NO EZB_OK
- */
-static void flush_gesture_queue(void)
-{
-    uint8_t scene_id;
-    while (xQueueReceive(s_gesture_queue, &scene_id, 0) == pdTRUE) {
-        ezb_zcl_scenes_recall_scene_cmd_t cmd = {
-            .cmd_ctrl = {
-                .dst_addr        = EZB_ADDRESS_SHORT(0x0000U),
-                .dst_ep          = 1U,
-                .src_ep          = ROUTER_GESTURE_ENDPOINT,
-                .dis_default_rsp = true,
-            },
-            .payload = {
-                .group_id        = ROUTER_GESTURE_GROUP_ID,
-                .scene_id        = scene_id,
-                .transition_time = 0U,
-            },
-        };
-        ezb_err_t err = ezb_zcl_scenes_recall_scene_cmd_req(&cmd);
-        if (err != EZB_ERR_NONE) {
-            ESP_LOGE("GESTURE", "Recall Scene (gesto %u) fallido: 0x%x",
-                     scene_id, err);
-        } else {
-            ESP_LOGI("GESTURE", "Gesto %u -> ZCL Scenes Recall Scene (coord)",
-                     scene_id);
-        }
+    switch (ep) {
+    case ROUTER_EP_NIGHT:
+        ESP_LOGI(TAG, "OnOff ep=%u -> night mode toggle", ep);
+        do_night_mode_toggle();
+        break;
+    case ROUTER_EP_JOIN:
+        ESP_LOGI(TAG, "OnOff ep=%u -> permit join", ep);
+        do_permit_join();
+        break;
+    case ROUTER_EP_TX:
+        ESP_LOGI(TAG, "OnOff ep=%u -> TX toggle", ep);
+        do_tx_toggle();
+        break;
+    case ROUTER_EP_RESET:
+        ESP_LOGI(TAG, "OnOff ep=%u -> factory reset", ep);
+        do_factory_reset();
+        break;
+    default:
+        ESP_LOGW(TAG, "OnOff ep=%u unknown, ignored", ep);
+        break;
     }
-}
 
-/**
- * @brief Alarm periodico que drena la cola de gestos.
- *
- * Se reschedula a si mismo cada 200 ms para procesar gestos
- * sin bloquear el mainloop de Zigbee.
- */
-static void gesture_flush_alarm(alarm_timer_arg_t arg)
-{
-    (void)arg;
-    flush_gesture_queue();
-    alarm_timer_schedule(gesture_flush_alarm, 0, 200);
+    msg->out.result = EZB_ZCL_STATUS_SUCCESS;
 }
 
 void set_led(uint8_t r, uint8_t g, uint8_t b)
@@ -212,24 +161,126 @@ static void configure_led(void)
     led_strip_clear(led_strip);
 }
 
+/* -------------------------------------------------------------------------
+ * Helper: create one OnOff server endpoint and add it to dev_desc.
+ *
+ * ep_id        : endpoint number (ROUTER_EP_NIGHT .. ROUTER_EP_RESET)
+ * add_basic    : true only for ep 1 -- Basic cluster carries device identity
+ *
+ * Verified API:
+ *   ezb_zcl_on_off_cluster_server_config_t  { bool on_off }
+ *   ezb_zcl_on_off_create_cluster_desc(cfg, EZB_ZCL_CLUSTER_SERVER)
+ *   ezb_zcl_basic_create_cluster_desc / ezb_zcl_basic_cluster_desc_add_attr
+ *   ezb_af_create_endpoint_desc / ezb_af_endpoint_add_cluster_desc
+ *   ezb_af_device_add_endpoint_desc
+ * ---------------------------------------------------------------------- */
+static esp_err_t add_onoff_endpoint(ezb_af_device_desc_t dev_desc,
+                                    uint8_t ep_id,
+                                    bool    add_basic)
+{
+    esp_err_t ret = ESP_OK;
+
+    ezb_af_ep_config_t ep_cfg = {
+        .ep_id              = ep_id,
+        .app_profile_id     = EZB_AF_HA_PROFILE_ID,
+        .app_device_id      = ROUTER_HA_DEVICE_ID_ON_OFF_LIGHT,
+        .app_device_version = 0,
+    };
+    ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_cfg);
+    if (!ep_desc) {
+        ESP_LOGE(TAG, "ep %u: no se pudo crear ep_desc", ep_id);
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Basic cluster -- only on ep 1 */
+    if (add_basic) {
+        ezb_zcl_basic_cluster_server_config_t basic_cfg = {
+            .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
+            .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
+        };
+        ezb_zcl_cluster_desc_t basic_desc =
+            ezb_zcl_basic_create_cluster_desc(&basic_cfg, EZB_ZCL_CLUSTER_SERVER);
+        if (!basic_desc) {
+            ESP_LOGE(TAG, "ep %u: no se pudo crear Basic cluster", ep_id);
+            ret = ESP_ERR_NO_MEM;
+            goto cleanup_ep;
+        }
+
+        struct {
+            uint16_t attr_id;
+            const void *value;
+        } basic_attrs[] = {
+            { EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, ESP_MANUFACTURER_NAME },
+            { EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,  ESP_MODEL_IDENTIFIER  },
+            { EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,        ESP_SW_BUILD_ID       },
+        };
+        for (size_t i = 0; i < sizeof(basic_attrs)/sizeof(basic_attrs[0]); i++) {
+            ret = ezb_zcl_basic_cluster_desc_add_attr(
+                    basic_desc, basic_attrs[i].attr_id, basic_attrs[i].value);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "ep %u: Basic attr 0x%04x error: %s",
+                         ep_id, basic_attrs[i].attr_id, esp_err_to_name(ret));
+                goto cleanup_ep;
+            }
+        }
+
+        ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "ep %u: no se pudo anadir Basic: %s",
+                     ep_id, esp_err_to_name(ret));
+            goto cleanup_ep;
+        }
+    }
+
+    /* OnOff cluster (server) */
+    ezb_zcl_on_off_cluster_server_config_t onoff_cfg = {
+        .on_off = false,   /* initial state: off */
+    };
+    ezb_zcl_cluster_desc_t onoff_desc =
+        ezb_zcl_on_off_create_cluster_desc(&onoff_cfg, EZB_ZCL_CLUSTER_SERVER);
+    if (!onoff_desc) {
+        ESP_LOGE(TAG, "ep %u: no se pudo crear OnOff cluster", ep_id);
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_ep;
+    }
+
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, onoff_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "ep %u: no se pudo anadir OnOff: %s",
+                 ep_id, esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "ep %u: no se pudo anadir al device_desc: %s",
+                 ep_id, esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    ESP_LOGI(TAG, "ep %u registrado: profile=0x%04x device=0x%04x "
+                  "clusters=[%sOnOff(server)]",
+             ep_id, EZB_AF_HA_PROFILE_ID, ROUTER_HA_DEVICE_ID_ON_OFF_LIGHT,
+             add_basic ? "Basic(server) " : "");
+    return ESP_OK;
+
+cleanup_ep:
+    ezb_af_free_endpoint_desc(ep_desc);
+    return ret;
+}
+
 /**
- * @brief Registra el endpoint del router con los clusters ZCL necesarios.
+ * @brief Registra los 4 endpoints OnOff server y el handler de mensajes.
  *
- * Clusters registrados:
- *   - Basic (server):  identificacion del dispositivo (ManufacturerName,
- *                      ModelIdentifier, SWBuildID)
- *   - Scenes (client): necesario para poder enviar Recall Scene hacia el
- *                      coordinador. Sin este registro el ZDO Simple Descriptor
- *                      no incluye cluster 0x0005 en la lista de output clusters
- *                      y el iHost ignora los comandos.
+ * Endpoints:
+ *   ep 1 (ROUTER_EP_NIGHT)  Basic+OnOff  -> do_night_mode_toggle()
+ *   ep 2 (ROUTER_EP_JOIN)   OnOff        -> do_permit_join()
+ *   ep 3 (ROUTER_EP_TX)     OnOff        -> do_tx_toggle()
+ *   ep 4 (ROUTER_EP_RESET)  OnOff        -> do_factory_reset()
  *
- * API verificada contra:
- *   ezbee/zcl/cluster/scenes_desc.h
- *   ezb_zcl_scenes_create_cluster_desc(NULL, EZB_ZCL_CLUSTER_CLIENT)
- *   -- NULL porque no existe ezb_zcl_scenes_cluster_client_config_t;
- *      el unico struct de config es para el rol server.
+ * El mensaje handler se registra una sola vez; despacha por ep_id.
  */
-static esp_err_t register_router_endpoint(void)
+static esp_err_t register_router_endpoints(void)
 {
     esp_err_t ret = ESP_OK;
 
@@ -239,107 +290,34 @@ static esp_err_t register_router_endpoint(void)
         return ESP_ERR_NO_MEM;
     }
 
-    ezb_af_ep_config_t ep_config = {
-        .ep_id              = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
-        .app_profile_id     = EZB_AF_HA_PROFILE_ID,
-        .app_device_id      = 0x0008,
-        .app_device_version = 0,
-    };
-    ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
-    if (!ep_desc) {
-        ESP_LOGE(TAG, "No se pudo crear ep_desc");
-        ret = ESP_ERR_NO_MEM;
-        goto cleanup_dev;
-    }
+    /* ep 1: Basic + OnOff */
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_NIGHT, true);
+    if (ret != ESP_OK) goto cleanup;
 
-    /* --- Basic cluster (server) ---------------------------------------- */
-    ezb_zcl_basic_cluster_server_config_t basic_cfg = {
-        .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
-        .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
-    };
-    ezb_zcl_cluster_desc_t basic_desc = ezb_zcl_basic_create_cluster_desc(
-            &basic_cfg, EZB_ZCL_CLUSTER_SERVER);
-    if (!basic_desc) {
-        ESP_LOGE(TAG, "No se pudo crear Basic cluster desc");
-        ret = ESP_ERR_NO_MEM;
-        goto cleanup_ep;
-    }
+    /* ep 2-4: OnOff only */
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_JOIN,  false);
+    if (ret != ESP_OK) goto cleanup;
 
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
-            (const void *)ESP_MANUFACTURER_NAME);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ManufacturerName: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_TX,    false);
+    if (ret != ESP_OK) goto cleanup;
 
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
-            (const void *)ESP_MODEL_IDENTIFIER);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ModelIdentifier: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
-
-    ret = ezb_zcl_basic_cluster_desc_add_attr(
-            basic_desc,
-            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,
-            (const void *)ESP_SW_BUILD_ID);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir SWBuildID: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
-
-    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
-
-    /* --- Scenes cluster (client) --------------------------------------- */
-    /* NULL config: ezb_zcl_scenes_cluster_client_config_t no existe en el
-     * SDK -- la unica config struct es para el rol server. Para el rol
-     * client se pasa NULL y el stack usa valores por defecto internos.
-     * Verificado en: ezbee/zcl/cluster/scenes_desc.h               */
-    ezb_zcl_cluster_desc_t scenes_desc =
-        ezb_zcl_scenes_create_cluster_desc(NULL, EZB_ZCL_CLUSTER_CLIENT);
-    if (!scenes_desc) {
-        ESP_LOGE(TAG, "No se pudo crear Scenes cluster desc (client)");
-        ret = ESP_ERR_NO_MEM;
-        goto cleanup_ep;
-    }
-
-    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, scenes_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir Scenes cluster al endpoint: %s",
-                 esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
-
-    /* ------------------------------------------------------------------- */
-    ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
-        goto cleanup_dev;
-    }
+    ret = add_onoff_endpoint(dev_desc, ROUTER_EP_RESET, false);
+    if (ret != ESP_OK) goto cleanup;
 
     ret = ezb_af_device_desc_register(dev_desc);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo registrar device desc: %s", esp_err_to_name(ret));
-        goto cleanup_dev;
+        ESP_LOGE(TAG, "No se pudo registrar device_desc: %s", esp_err_to_name(ret));
+        goto cleanup;
     }
 
-    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x "
-                  "clusters=[Basic(server) Scenes(client)] fw=%s",
-             ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID,
-             0x0008, ESP_SW_BUILD_ID + 1);
+    /* Register OnOff message handler -- single handler for all 4 endpoints */
+    ezb_zcl_on_off_register_message_handler(on_off_message_handler);
+
+    ESP_LOGI(TAG, "4 endpoints OnOff registrados (eps 1-4), fw=%s",
+             ESP_SW_BUILD_ID + 1);
     return ESP_OK;
 
-cleanup_ep:
-    ezb_af_free_endpoint_desc(ep_desc);
-cleanup_dev:
+cleanup:
     ezb_af_free_device_desc(dev_desc);
     return ret;
 }
@@ -518,12 +496,7 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
-    ESP_ERROR_CHECK(register_router_endpoint());
-
-    /* Arrancar el alarm periodico de vaciado de cola de gestos.
-     * flush_gesture_queue() se ejecuta en contexto del stack Zigbee,
-     * donde el lock ya esta adquirido. */
-    alarm_timer_schedule(gesture_flush_alarm, 0, 200);
+    ESP_ERROR_CHECK(register_router_endpoints());
 
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
@@ -540,14 +513,7 @@ void app_main(void)
     ESP_LOGI(TAG, "app_main: antes de init");
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nvs_flash_init_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME));
-    ESP_LOGI(TAG, "Arrancando Router Zigbee Puro");
-
-    /* Cola de gestos: debe existir antes de que button.c pueda encolar. */
-    s_gesture_queue = xQueueCreate(8U, sizeof(uint8_t));
-    if (!s_gesture_queue) {
-        ESP_LOGE(TAG, "No se pudo crear s_gesture_queue -- abort");
-        esp_restart();
-    }
+    ESP_LOGI(TAG, "Arrancando Router Zigbee Puro -- fw=%s", ESP_SW_BUILD_ID + 1);
 
     BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main",
                                 ZIGBEE_MAIN_TASK_STACK_SIZE, NULL, 5, NULL);
