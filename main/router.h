@@ -20,13 +20,15 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 #define ESP_MODEL_IDENTIFIER  "\x08" "ESP32-C6"
 
 /* Firmware version string exposed via ZCL Basic cluster, attribute SWBuildID (0x4000).
- * Format: ZCL character string (Pascal-style, length-prefixed).
- *
  * SemVer policy:
- *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
+ *   MAJOR -> new gesture, LED semantic, new Zigbee-visible parameter
  *   MINOR -> non-disruptive feature
- *   PATCH -> bugfix only */
-#define ESP_SW_BUILD_ID       "\x05" "6.0.0"
+ *   PATCH -> bugfix only
+ *
+ * 7.0.0: device type changed to Color Temperature Light (0x010C);
+ *        On/Off + Level Control + Color Control clusters added as servers;
+ *        gesture->cluster mapping documented in router.c. */
+#define ESP_SW_BUILD_ID       "\x05" "7.0.0"
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
@@ -34,18 +36,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 #define ROUTER_MAX_CHILDREN           6U
 #define ROUTER_JOIN_OPEN_DURATION_S   255U
 
-/* RF transmit power in dBm.
- *
- * LOW  (8 dBm): potencia de trabajo normal en red domestica.
- *               Balance optimo rango/consumo/interferencia.
- *               Es el valor por defecto al arrancar.
- *
- * HIGH (20 dBm): modo boost para nodos lejanos o troubleshooting.
- *                Maximo hardware del ESP32-C6 / limite CE ETSI EN 300 328.
- *                Activar con triple-tap del boton BOOT; volatile (revierte a
- *                LOW en el siguiente reboot).
- *
- * Ciclo del triple-tap:  8 dBm -> 20 dBm -> 8 dBm -> ... */
+/* RF transmit power in dBm. */
 #define ROUTER_TX_POWER_LOW_DBM        8
 #define ROUTER_TX_POWER_HIGH_DBM      20
 
@@ -62,9 +53,11 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   0x03  TX_TOGGLE          -- equivalent to 3x tap  (8 dBm <-> 20 dBm)
  *   0x04  FACTORY_RESET      -- equivalent to hold 5 s (NVS erase + reboot)
  *
- * All commands carry no payload.  The router sends a ZCL Default Response
- * with status SUCCESS (0x00) on success or UNSUP_CMD (0x81) for unknown
- * command IDs.
+ * Standard cluster mapping (via On/Off 0x0006 + Level Control 0x0008):
+ *   On/Off ON    -> night mode ON  (LED silenced)
+ *   On/Off OFF   -> night mode OFF (LED restored)
+ *   On/Off Toggle -> permit-join toggle
+ *   Level slider  -> tx_toggle
  *
  * These values MUST match button_action_t in button.h.
  * ---------------------------------------------------------------------- */
