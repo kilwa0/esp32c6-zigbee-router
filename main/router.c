@@ -14,6 +14,7 @@
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
 #include "ezbee/zcl/cluster/on_off.h"
+#include "ezbee/zcl/zcl_common.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -81,56 +82,64 @@ _Static_assert(sizeof(s_tc_link_key) == ESP_ZIGBEE_TC_LINK_KEY_LEN,
 static _Atomic bool steering_retry_pending;
 static _Atomic bool retry_with_initialization = false;
 
+/* Forward declarations of button actions (defined in button.c, declared
+ * extern here to avoid adding them to button.h -- they are implementation
+ * details of button.c that router.c invokes on behalf of the coordinator). */
+extern void do_night_mode_toggle(void);
+extern void do_permit_join(void);
+extern void do_tx_toggle(void);
+extern void do_factory_reset(void);
+
 /* -------------------------------------------------------------------------
- * ZCL OnOff message handler
+ * ZCL command handler
  *
- * The iHost sends On / Off / Toggle commands to one of the 4 OnOff server
- * endpoints. Each endpoint maps to a button gesture action:
+ * Registered via ezb_zcl_register_cmd_handler() -- called by the stack for
+ * every inbound ZCL command addressed to this device.
  *
- *   ROUTER_EP_NIGHT  (1) -> do_night_mode_toggle()
- *   ROUTER_EP_JOIN   (2) -> do_permit_join()
- *   ROUTER_EP_TX     (3) -> do_tx_toggle()
- *   ROUTER_EP_RESET  (4) -> do_factory_reset()
+ * We only handle cluster 0x0006 (OnOff) commands. Any command to one of
+ * the 4 gesture endpoints (On=0x01, Off=0x00, Toggle=0x02) triggers the
+ * corresponding action.  The coordinator (iHost / Node-RED) sends Toggle.
  *
- * The handler is registered via ezb_zcl_on_off_register_message_handler().
- * It is called in the Zigbee stack task context -- no lock needed.
+ * dst_ep identifies which gesture:
+ *   ROUTER_EP_NIGHT (1) -> do_night_mode_toggle()
+ *   ROUTER_EP_JOIN  (2) -> do_permit_join()
+ *   ROUTER_EP_TX    (3) -> do_tx_toggle()
+ *   ROUTER_EP_RESET (4) -> do_factory_reset()
  *
- * The actual On/Off attribute state is ignored: any command (On, Off, Toggle)
- * triggers the action. Node-RED or the iHost sends Toggle to trigger a
- * gesture; the attribute state has no physical meaning here.
- *
- * API verified against:
- *   ezbee/zcl/cluster/on_off.h
- *   ezbee/zcl/cluster/on_off_desc.h
+ * API verified against ezbee/zcl/zcl_common.h:
+ *   ezb_zcl_cmd_t { .cluster_id, .cmd_id, .cmd_ctrl.dst_ep, ... }
+ *   ezb_zcl_register_cmd_handler(ezb_zcl_cmd_handler_t)
+ *   typedef void (*ezb_zcl_cmd_handler_t)(ezb_zcl_cmd_t *)
  * ---------------------------------------------------------------------- */
-static void on_off_message_handler(ezb_zcl_on_off_message_t *msg)
+#define ZCL_CLUSTER_ON_OFF  0x0006U
+
+static void zcl_cmd_handler(ezb_zcl_cmd_t *cmd)
 {
-    if (!msg) return;
-    uint8_t ep = msg->info.src_ep;  /* endpoint the command was sent TO */
+    if (!cmd) return;
+    if (cmd->cluster_id != ZCL_CLUSTER_ON_OFF) return;
+
+    /* cmd->cmd_ctrl.dst_ep is the destination endpoint on this device */
+    uint8_t ep = cmd->cmd_ctrl.dst_ep;
+
+    ESP_LOGI(TAG, "ZCL OnOff cluster cmd=0x%02x ep=%u", cmd->cmd_id, ep);
 
     switch (ep) {
     case ROUTER_EP_NIGHT:
-        ESP_LOGI(TAG, "OnOff ep=%u -> night mode toggle", ep);
         do_night_mode_toggle();
         break;
     case ROUTER_EP_JOIN:
-        ESP_LOGI(TAG, "OnOff ep=%u -> permit join", ep);
         do_permit_join();
         break;
     case ROUTER_EP_TX:
-        ESP_LOGI(TAG, "OnOff ep=%u -> TX toggle", ep);
         do_tx_toggle();
         break;
     case ROUTER_EP_RESET:
-        ESP_LOGI(TAG, "OnOff ep=%u -> factory reset", ep);
         do_factory_reset();
         break;
     default:
-        ESP_LOGW(TAG, "OnOff ep=%u unknown, ignored", ep);
+        ESP_LOGW(TAG, "ZCL OnOff ep=%u not mapped, ignored", ep);
         break;
     }
-
-    msg->out.result = EZB_ZCL_STATUS_SUCCESS;
 }
 
 void set_led(uint8_t r, uint8_t g, uint8_t b)
@@ -164,15 +173,19 @@ static void configure_led(void)
 /* -------------------------------------------------------------------------
  * Helper: create one OnOff server endpoint and add it to dev_desc.
  *
- * ep_id        : endpoint number (ROUTER_EP_NIGHT .. ROUTER_EP_RESET)
- * add_basic    : true only for ep 1 -- Basic cluster carries device identity
+ * ep_id     : endpoint number (ROUTER_EP_NIGHT .. ROUTER_EP_RESET)
+ * add_basic : true only for ep 1 -- Basic cluster carries device identity
  *
- * Verified API:
- *   ezb_zcl_on_off_cluster_server_config_t  { bool on_off }
- *   ezb_zcl_on_off_create_cluster_desc(cfg, EZB_ZCL_CLUSTER_SERVER)
- *   ezb_zcl_basic_create_cluster_desc / ezb_zcl_basic_cluster_desc_add_attr
- *   ezb_af_create_endpoint_desc / ezb_af_endpoint_add_cluster_desc
- *   ezb_af_device_add_endpoint_desc
+ * API verified against SDK headers:
+ *   ezbee/zcl/cluster/on_off.h
+ *     ezb_zcl_on_off_cluster_server_config_t { bool on_off }
+ *     ezb_zcl_on_off_create_cluster_desc(cfg, EZB_ZCL_CLUSTER_SERVER)
+ *   ezbee/zcl/cluster/basic_desc.h
+ *     ezb_zcl_basic_cluster_server_config_t
+ *     ezb_zcl_basic_create_cluster_desc / ezb_zcl_basic_cluster_desc_add_attr
+ *   ezbee/af.h
+ *     ezb_af_create_endpoint_desc / ezb_af_endpoint_add_cluster_desc
+ *     ezb_af_device_add_endpoint_desc / ezb_af_free_endpoint_desc
  * ---------------------------------------------------------------------- */
 static esp_err_t add_onoff_endpoint(ezb_af_device_desc_t dev_desc,
                                     uint8_t ep_id,
@@ -207,7 +220,7 @@ static esp_err_t add_onoff_endpoint(ezb_af_device_desc_t dev_desc,
         }
 
         struct {
-            uint16_t attr_id;
+            uint16_t    attr_id;
             const void *value;
         } basic_attrs[] = {
             { EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, ESP_MANUFACTURER_NAME },
@@ -270,7 +283,7 @@ cleanup_ep:
 }
 
 /**
- * @brief Registra los 4 endpoints OnOff server y el handler de mensajes.
+ * @brief Registra los 4 endpoints OnOff server y el handler ZCL generico.
  *
  * Endpoints:
  *   ep 1 (ROUTER_EP_NIGHT)  Basic+OnOff  -> do_night_mode_toggle()
@@ -278,7 +291,8 @@ cleanup_ep:
  *   ep 3 (ROUTER_EP_TX)     OnOff        -> do_tx_toggle()
  *   ep 4 (ROUTER_EP_RESET)  OnOff        -> do_factory_reset()
  *
- * El mensaje handler se registra una sola vez; despacha por ep_id.
+ * zcl_cmd_handler() se registra una sola vez para todos los endpoints;
+ * filtra por cluster_id=0x0006 y despacha por dst_ep.
  */
 static esp_err_t register_router_endpoints(void)
 {
@@ -310,8 +324,9 @@ static esp_err_t register_router_endpoints(void)
         goto cleanup;
     }
 
-    /* Register OnOff message handler -- single handler for all 4 endpoints */
-    ezb_zcl_on_off_register_message_handler(on_off_message_handler);
+    /* Generic ZCL command handler -- dispatches OnOff commands by dst_ep.
+     * ezb_zcl_register_cmd_handler() is defined in ezbee/zcl/zcl_common.h */
+    ezb_zcl_register_cmd_handler(zcl_cmd_handler);
 
     ESP_LOGI(TAG, "4 endpoints OnOff registrados (eps 1-4), fw=%s",
              ESP_SW_BUILD_ID + 1);
