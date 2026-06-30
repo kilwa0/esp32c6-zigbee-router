@@ -13,7 +13,9 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/identify_desc.h"
 #include "ezbee/zcl/cluster/custom.h"
+#include "ezbee/zcl/zcl_common.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -110,25 +112,107 @@ static void configure_led(void)
 }
 
 /* -------------------------------------------------------------------------
- * ZCL custom cluster command handler
+ * ZCL custom cluster -- gesture control
  *
- * Called by the Zigbee stack when a command is received on cluster
- * ROUTER_MANUF_CLUSTER_ID (0xFC00).  Maps command IDs to the same
- * gesture actions triggered by the physical button.
+ * process_cmd_cb: called by the stack for every cluster-specific command
+ * received on ROUTER_GESTURE_CLUSTER_ID.  Maps cmd_id -> button action.
+ *
+ * Signature mandated by ezb_zcl_custom_cluster_handlers_t:
+ *   ezb_zcl_status_t cb(const ezb_zcl_cmd_hdr_t*, const uint8_t*, uint16_t)
  * ---------------------------------------------------------------------- */
-static bool remote_gesture_cmd_handler(const ezb_zcl_cmd_info_t *cmd_info)
+static ezb_zcl_status_t gesture_process_cmd(
+        const ezb_zcl_cmd_hdr_t *hdr,
+        const uint8_t           *payload,
+        uint16_t                 payload_len)
 {
-    uint8_t cmd_id = ezb_zcl_cmd_info_get_command_id(cmd_info);
-    ESP_LOGI(TAG, "Remote gesture cmd received: 0x%02x", cmd_id);
+    (void)payload;
+    (void)payload_len;
 
-    esp_err_t err = button_remote_trigger((button_action_t)cmd_id);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Unknown remote gesture cmd 0x%02x -- ignored", cmd_id);
-        return false;  /* stack will send Default Response: UNSUP_CLUSTER_COMMAND */
+    /* Only accept server-direction commands (coordinator -> us). */
+    if (EZB_ZCL_CMD_FC_IS_TO_CLI_DIRECTION(hdr->fc)) {
+        return EZB_ZCL_STATUS_INVALID_FIELD;
     }
-    return true;       /* stack will send Default Response: SUCCESS */
+
+    ESP_LOGI(TAG, "Gesture cmd 0x%02x from 0x%04x ep%u",
+             hdr->cmd_id, hdr->src_addr.u.short_addr, hdr->src_ep);
+
+    esp_err_t err = button_remote_trigger((button_action_t)hdr->cmd_id);
+    if (err == ESP_ERR_INVALID_ARG) {
+        ESP_LOGW(TAG, "Unknown gesture cmd 0x%02x -- UNSUP_CMD", hdr->cmd_id);
+        return EZB_ZCL_STATUS_UNSUP_CMD;
+    }
+    return EZB_ZCL_STATUS_SUCCESS;
 }
 
+/* cmd_disc_cb: returns the list of commands supported for discovery. */
+static uint8_t gesture_disc_cmd(
+        bool      is_recv,
+        uint8_t **list)
+{
+    static uint8_t recv_cmds[] = {
+        ROUTER_CMD_NIGHT_MODE_TOGGLE,
+        ROUTER_CMD_PERMIT_JOIN,
+        ROUTER_CMD_TX_TOGGLE,
+        ROUTER_CMD_FACTORY_RESET,
+    };
+    static uint8_t send_cmds[] = { /* no unsolicited commands sent */ };
+
+    if (is_recv) {
+        *list = recv_cmds;
+        return sizeof(recv_cmds);
+    }
+    *list = send_cmds;
+    return 0;
+}
+
+/* init_func: called by the stack when the endpoint is registered.
+ * This is the correct place to call ezb_zcl_custom_cluster_handlers_register()
+ * (mirrors the data_producer SDK example pattern). */
+static void gesture_cluster_init(uint8_t ep_id)
+{
+    (void)ep_id;
+    ezb_zcl_custom_cluster_handlers_t handlers = {
+        .cluster_id     = ROUTER_GESTURE_CLUSTER_ID,
+        .cluster_role   = EZB_ZCL_CLUSTER_SERVER,
+        .process_cmd_cb = gesture_process_cmd,
+        .check_value_cb = NULL,
+        .write_attr_cb  = NULL,
+        .cmd_disc_cb    = gesture_disc_cmd,
+    };
+    ezb_zcl_custom_cluster_handlers_register(&handlers);
+    ESP_LOGI(TAG, "Gesture cluster 0x%04x init (ep%u): "
+                  "cmds 0x01=night_mode 0x02=permit_join "
+                  "0x03=tx_toggle 0x04=factory_reset",
+             ROUTER_GESTURE_CLUSTER_ID, ep_id);
+}
+
+static void gesture_cluster_deinit(uint8_t ep_id)
+{
+    (void)ep_id;
+}
+
+/* -------------------------------------------------------------------------
+ * ZCL core action handler (Default Response, etc.)
+ * ---------------------------------------------------------------------- */
+static void zcl_core_action_handler(
+        ezb_zcl_core_action_callback_id_t callback_id,
+        void                             *message)
+{
+    switch (callback_id) {
+    case EZB_ZCL_CORE_DEFAULT_RSP_CB_ID: {
+        ezb_zcl_cmd_default_rsp_message_t *rsp =
+            (ezb_zcl_cmd_default_rsp_message_t *)message;
+        ESP_LOGI(TAG, "ZCL Default Response: status=0x%02x", rsp->in.status_code);
+    } break;
+    default:
+        ESP_LOGD(TAG, "ZCL Core Action: id=0x%04lx", (unsigned long)callback_id);
+        break;
+    }
+}
+
+/* -------------------------------------------------------------------------
+ * Endpoint registration
+ * ---------------------------------------------------------------------- */
 static esp_err_t register_router_endpoint(void)
 {
     esp_err_t ret = ESP_OK;
@@ -169,64 +253,70 @@ static esp_err_t register_router_endpoint(void)
             basic_desc,
             EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
             (const void *)ESP_MANUFACTURER_NAME);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ManufacturerName: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
+    if (ret != ESP_OK) goto cleanup_ep;
 
     ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
             EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
             (const void *)ESP_MODEL_IDENTIFIER);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir ModelIdentifier: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
+    if (ret != ESP_OK) goto cleanup_ep;
 
     ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
             EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,
             (const void *)ESP_SW_BUILD_ID);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir SWBuildID: %s", esp_err_to_name(ret));
-        goto cleanup_ep;
-    }
+    if (ret != ESP_OK) goto cleanup_ep;
 
     ret = ezb_af_endpoint_add_cluster_desc(ep_desc, basic_desc);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir Basic cluster al endpoint: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "No se pudo anadir Basic cluster: %s", esp_err_to_name(ret));
         goto cleanup_ep;
     }
 
-    /* --- Manufacturer-specific cluster 0xFC00 (server) --- */
-    ezb_zcl_custom_cluster_handlers_t manuf_handlers = {
-        .cluster_id        = ROUTER_MANUF_CLUSTER_ID,
-        .cluster_role      = EZB_ZCL_CLUSTER_SERVER,
-        .manufacturer_code = ROUTER_MANUF_CODE,
-        .process_cmd_cb    = remote_gesture_cmd_handler,
+    /* --- Identify cluster (server) -- required by ZCL HA profile --- */
+    ezb_zcl_identify_cluster_server_config_t identify_cfg = {
+        .identify_time = EZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE,
     };
-    ret = ezb_zcl_custom_cluster_handlers_register(&manuf_handlers);
+    ezb_zcl_cluster_desc_t identify_desc = ezb_zcl_identify_create_cluster_desc(
+            &identify_cfg, EZB_ZCL_CLUSTER_SERVER);
+    if (!identify_desc) {
+        ESP_LOGE(TAG, "No se pudo crear Identify cluster desc");
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_ep;
+    }
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, identify_desc);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo registrar handlers del cluster 0x%04x: %s",
-                 ROUTER_MANUF_CLUSTER_ID, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "No se pudo anadir Identify cluster: %s", esp_err_to_name(ret));
         goto cleanup_ep;
     }
 
-    ezb_zcl_cluster_desc_t manuf_desc =
-        ezb_zcl_custom_cluster_create(ROUTER_MANUF_CLUSTER_ID,
-                                      ROUTER_MANUF_CODE,
-                                      EZB_ZCL_CLUSTER_SERVER);
-    if (!manuf_desc) {
-        ESP_LOGE(TAG, "No se pudo crear custom cluster desc 0x%04x",
-                 ROUTER_MANUF_CLUSTER_ID);
+    /* --- Gesture control cluster 0xFC00 (server) ---
+     *
+     * init_func / deinit_func lifecycle:
+     *   init_func  is called when ezb_af_device_desc_register() processes
+     *              the endpoint -- this is where handlers are registered.
+     *   deinit_func is called on teardown.
+     *
+     * The handlers struct (process_cmd_cb, cmd_disc_cb, ...) is NOT passed
+     * here; it is registered inside gesture_cluster_init() as required by
+     * the SDK (mirrors data_producer example in esp-zigbee-sdk). */
+    ezb_zcl_custom_cluster_config_t gesture_cfg = {
+        .cluster_id  = ROUTER_GESTURE_CLUSTER_ID,
+        .init_func   = gesture_cluster_init,
+        .deinit_func = gesture_cluster_deinit,
+    };
+    ezb_zcl_cluster_desc_t gesture_desc = ezb_zcl_custom_create_cluster_desc(
+            &gesture_cfg, EZB_ZCL_CLUSTER_SERVER);
+    if (!gesture_desc) {
+        ESP_LOGE(TAG, "No se pudo crear gesture cluster desc 0x%04x",
+                 ROUTER_GESTURE_CLUSTER_ID);
         ret = ESP_ERR_NO_MEM;
         goto cleanup_ep;
     }
 
-    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, manuf_desc);
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, gesture_desc);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo anadir custom cluster al endpoint: %s",
-                 esp_err_to_name(ret));
+        ESP_LOGE(TAG, "No se pudo anadir gesture cluster: %s", esp_err_to_name(ret));
         goto cleanup_ep;
     }
 
@@ -242,14 +332,12 @@ static esp_err_t register_router_endpoint(void)
         goto cleanup_dev;
     }
 
-    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x "
-                  "(range_extender, fw=%s)",
+    /* Register ZCL core action handler (Default Response, etc.) */
+    ezb_zcl_core_action_handler_register(zcl_core_action_handler);
+
+    ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x fw=%s",
              ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID,
              0x0008, ESP_SW_BUILD_ID + 1);
-    ESP_LOGI(TAG, "Custom cluster 0x%04x (manuf 0x%04x) registrado:"
-                  " cmds 0x01=night_mode 0x02=permit_join"
-                  " 0x03=tx_toggle 0x04=factory_reset",
-             ROUTER_MANUF_CLUSTER_ID, ROUTER_MANUF_CODE);
     return ESP_OK;
 
 cleanup_ep:

@@ -26,7 +26,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
  *   MINOR -> non-disruptive feature
  *   PATCH -> bugfix only */
-#define ESP_SW_BUILD_ID       "\x05" "5.0.0"
+#define ESP_SW_BUILD_ID       "\x05" "6.0.0"
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
@@ -55,7 +55,6 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  * Manufacturer-specific cluster for remote gesture control.
  *
  * Cluster ID: 0xFC00  (ZCL private/manufacturer range 0xFC00-0xFFFF)
- * Manufacturer code: 0x1001  (Espressif Systems)
  *
  * Server-side commands (coordinator -> router):
  *   0x01  NIGHT_MODE_TOGGLE  -- equivalent to 1x tap
@@ -63,14 +62,13 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   0x03  TX_TOGGLE          -- equivalent to 3x tap  (8 dBm <-> 20 dBm)
  *   0x04  FACTORY_RESET      -- equivalent to hold 5 s (NVS erase + reboot)
  *
- * All commands carry no payload.  The router sends a Default Response
- * with status SUCCESS (0x00) on success or UNSUP_CLUSTER_COMMAND (0x81)
- * for unknown command IDs.
+ * All commands carry no payload.  The router sends a ZCL Default Response
+ * with status SUCCESS (0x00) on success or UNSUP_CMD (0x81) for unknown
+ * command IDs.
  *
  * These values MUST match button_action_t in button.h.
  * ---------------------------------------------------------------------- */
-#define ROUTER_MANUF_CLUSTER_ID          0xFC00U
-#define ROUTER_MANUF_CODE                0x1001U   /* Espressif Systems  */
+#define ROUTER_GESTURE_CLUSTER_ID        0xFC00U
 
 #define ROUTER_CMD_NIGHT_MODE_TOGGLE     0x01U
 #define ROUTER_CMD_PERMIT_JOIN           0x02U
