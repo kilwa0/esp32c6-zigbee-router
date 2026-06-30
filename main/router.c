@@ -13,6 +13,7 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/scenes.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -396,4 +397,42 @@ void app_main(void)
     BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main",
                                 ZIGBEE_MAIN_TASK_STACK_SIZE, NULL, 5, NULL);
     ESP_LOGI(TAG, "app_main: xTaskCreate=%ld (pdPASS=%ld)", (long)ok, (long)pdPASS);
+}
+
+/* -------------------------------------------------------------------------
+ * Gesture reporting -- ZCL Scenes Recall Scene (cluster 0x0005, cmd 0x05)
+ * ---------------------------------------------------------------------- */
+
+esp_err_t router_report_gesture(uint8_t scene_id)
+{
+    if (scene_id < 1 || scene_id > 4) {
+        ESP_LOGE(TAG, "router_report_gesture: scene_id %u fuera de rango", scene_id);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ezb_zcl_scenes_recall_scene_cmd_t cmd = {
+        .cmd_ctrl = {
+            .dst_addr        = EZB_ADDRESS_SHORT(0x0000),
+            .dst_ep          = 1,
+            .src_ep          = ESP_ZIGBEE_RANGE_EXTENDER_EP_ID,
+            .dis_default_rsp = true,
+            .cnf_ctx         = {0},
+        },
+        .payload = {
+            .group_id        = EZB_ZCL_SCENE_GLOBAL_SCENE_GROUP_ID,
+            .scene_id        = scene_id,
+            .transition_time = 0,
+        },
+    };
+
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    ezb_err_t err = ezb_zcl_scenes_recall_scene_cmd_req(&cmd);
+    esp_zigbee_lock_release();
+
+    if (err != EZB_OK) {
+        ESP_LOGE(TAG, "Recall Scene gesto %u error: 0x%x", scene_id, (unsigned)err);
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Gesto %u -> ZCL Scenes Recall Scene OK", scene_id);
+    return ESP_OK;
 }
