@@ -124,6 +124,11 @@ esp_err_t router_report_gesture(uint8_t scene_id)
  *
  * Ejecutada desde gesture_flush_alarm(), que corre en el contexto del stack
  * Zigbee -- el lock ya esta adquirido, no usar esp_zigbee_lock_acquire aqui.
+ *
+ * Struct verificado contra:
+ *   ezbee/zcl/cluster/scenes.h -- ezb_zcl_scenes_recall_scene_cmd_t
+ *   .cmd_ctrl.dst_addr_u.addr_short / .dst_endpoint / .src_endpoint
+ *   .payload.group_id / .payload.scene_id / .payload.transition_time
  */
 static void flush_gesture_queue(void)
 {
@@ -131,7 +136,7 @@ static void flush_gesture_queue(void)
     while (xQueueReceive(s_gesture_queue, &scene_id, 0) == pdTRUE) {
         ezb_zcl_scenes_recall_scene_cmd_t cmd = {
             .cmd_ctrl = {
-                .dst_addr_u.addr_short = 0x0000U,   /* coordinador */
+                .dst_addr_u.addr_short = 0x0000U,
                 .dst_endpoint          = 1U,
                 .src_endpoint          = ROUTER_GESTURE_ENDPOINT,
             },
@@ -193,6 +198,23 @@ static void configure_led(void)
     led_strip_clear(led_strip);
 }
 
+/**
+ * @brief Registra el endpoint del router con los clusters ZCL necesarios.
+ *
+ * Clusters registrados:
+ *   - Basic (server):  identificacion del dispositivo (ManufacturerName,
+ *                      ModelIdentifier, SWBuildID)
+ *   - Scenes (client): necesario para poder enviar Recall Scene hacia el
+ *                      coordinador. Sin este registro el ZDO Simple Descriptor
+ *                      no incluye cluster 0x0005 en la lista de output clusters
+ *                      y el iHost ignora los comandos.
+ *
+ * API verificada contra:
+ *   ezbee/zcl/cluster/scenes_desc.h
+ *   ezb_zcl_scenes_create_cluster_desc(NULL, EZB_ZCL_CLUSTER_CLIENT)
+ *   -- NULL porque no existe ezb_zcl_scenes_cluster_client_config_t;
+ *      el unico struct de config es para el rol server.
+ */
 static esp_err_t register_router_endpoint(void)
 {
     esp_err_t ret = ESP_OK;
@@ -216,6 +238,7 @@ static esp_err_t register_router_endpoint(void)
         goto cleanup_dev;
     }
 
+    /* --- Basic cluster (server) ---------------------------------------- */
     ezb_zcl_basic_cluster_server_config_t basic_cfg = {
         .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,
         .power_source = EZB_ZCL_BASIC_POWER_SOURCE_SINGLE_PHASE_MAINS,
@@ -248,7 +271,7 @@ static esp_err_t register_router_endpoint(void)
 
     ret = ezb_zcl_basic_cluster_desc_add_attr(
             basic_desc,
-            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,   /* correct SDK symbol name */
+            EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID,
             (const void *)ESP_SW_BUILD_ID);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo anadir SWBuildID: %s", esp_err_to_name(ret));
@@ -261,6 +284,27 @@ static esp_err_t register_router_endpoint(void)
         goto cleanup_ep;
     }
 
+    /* --- Scenes cluster (client) --------------------------------------- */
+    /* NULL config: ezb_zcl_scenes_cluster_client_config_t no existe en el
+     * SDK -- la unica config struct es para el rol server. Para el rol
+     * client se pasa NULL y el stack usa valores por defecto internos.
+     * Verificado en: ezbee/zcl/cluster/scenes_desc.h               */
+    ezb_zcl_cluster_desc_t scenes_desc =
+        ezb_zcl_scenes_create_cluster_desc(NULL, EZB_ZCL_CLUSTER_CLIENT);
+    if (!scenes_desc) {
+        ESP_LOGE(TAG, "No se pudo crear Scenes cluster desc (client)");
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup_ep;
+    }
+
+    ret = ezb_af_endpoint_add_cluster_desc(ep_desc, scenes_desc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo anadir Scenes cluster al endpoint: %s",
+                 esp_err_to_name(ret));
+        goto cleanup_ep;
+    }
+
+    /* ------------------------------------------------------------------- */
     ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo anadir endpoint desc: %s", esp_err_to_name(ret));
@@ -274,9 +318,9 @@ static esp_err_t register_router_endpoint(void)
     }
 
     ESP_LOGI(TAG, "Endpoint registrado: ep=%u profile=0x%04x device=0x%04x "
-                  "(range_extender, fw=%s)",
+                  "clusters=[Basic(server) Scenes(client)] fw=%s",
              ESP_ZIGBEE_RANGE_EXTENDER_EP_ID, EZB_AF_HA_PROFILE_ID,
-             0x0008, ESP_SW_BUILD_ID + 1);  /* +1 skips ZCL length byte */
+             0x0008, ESP_SW_BUILD_ID + 1);
     return ESP_OK;
 
 cleanup_ep:
