@@ -76,6 +76,15 @@ static void start_blink(bool fast, uint8_t r, uint8_t g, uint8_t b);
 static void stop_blink(void);
 static void btn_isr(void *arg);
 
+/* Forward declarations for gesture actions (defined later in this file).
+ * Required because tap_window_cb and hold_cb call them before their
+ * definitions -- GCC -Werror=implicit-function-declaration rejects
+ * implicit declarations. */
+void do_night_mode_toggle(void);
+void do_permit_join(void);
+void do_tx_toggle(void);
+void do_factory_reset(void);
+
 /* -------------------------------------------------------------------------
  * ISR -- both edges
  * ---------------------------------------------------------------------- */
