@@ -13,9 +13,11 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/scenes.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "sdkconfig.h"
 
 #include "router.h"
@@ -79,6 +81,89 @@ _Static_assert(sizeof(s_tc_link_key) == ESP_ZIGBEE_TC_LINK_KEY_LEN,
 
 static _Atomic bool steering_retry_pending;
 static _Atomic bool retry_with_initialization = false;
+
+/* -------------------------------------------------------------------------
+ * Gesture reporting -- ZCL Scenes Recall Scene
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Cola de scene_id pendientes de enviar al coordinador.
+ * Capacidad 8: mas que suficiente para cualquier rafaga de gestos.
+ * Creada en app_main antes de arrancar la tarea Zigbee.
+ */
+static QueueHandle_t s_gesture_queue = NULL;
+
+/**
+ * @brief Encola un scene_id para enviarlo como Recall Scene desde la tarea Zigbee.
+ *
+ * Llamable desde cualquier contexto (timer callback, tarea, ISR).
+ * xQueueSend(..., 0) no bloquea: si la cola esta llena se descarta el gesto.
+ *
+ * @param scene_id  1=night-mode, 2=permit-join, 3=tx-toggle, 4=factory-reset
+ * @return ESP_OK en exito, ESP_ERR_* en error
+ */
+esp_err_t router_report_gesture(uint8_t scene_id)
+{
+    if (scene_id < 1U || scene_id > 4U) {
+        ESP_LOGE("GESTURE", "scene_id %u fuera de rango [1-4]", scene_id);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_gesture_queue) {
+        ESP_LOGE("GESTURE", "cola no inicializada");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xQueueSend(s_gesture_queue, &scene_id, 0) != pdTRUE) {
+        ESP_LOGW("GESTURE", "cola llena, gesto %u descartado", scene_id);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Drena s_gesture_queue y envia cada gesto como ZCL Scenes Recall Scene.
+ *
+ * Ejecutada desde gesture_flush_alarm(), que corre en el contexto del stack
+ * Zigbee -- el lock ya esta adquirido, no usar esp_zigbee_lock_acquire aqui.
+ */
+static void flush_gesture_queue(void)
+{
+    uint8_t scene_id;
+    while (xQueueReceive(s_gesture_queue, &scene_id, 0) == pdTRUE) {
+        ezb_zcl_scenes_recall_scene_cmd_t cmd = {
+            .cmd_ctrl = {
+                .dst_addr_u.addr_short = 0x0000U,   /* coordinador */
+                .dst_endpoint          = 1U,
+                .src_endpoint          = ROUTER_GESTURE_ENDPOINT,
+            },
+            .payload = {
+                .group_id        = ROUTER_GESTURE_GROUP_ID,
+                .scene_id        = scene_id,
+                .transition_time = 0U,
+            },
+        };
+        ezb_err_t err = ezb_zcl_scenes_recall_scene_cmd_req(&cmd);
+        if (err != EZB_OK) {
+            ESP_LOGE("GESTURE", "Recall Scene (gesto %u) fallido: 0x%x",
+                     scene_id, err);
+        } else {
+            ESP_LOGI("GESTURE", "Gesto %u -> ZCL Scenes Recall Scene (coord)",
+                     scene_id);
+        }
+    }
+}
+
+/**
+ * @brief Alarm periodico que drena la cola de gestos.
+ *
+ * Se reschedula a si mismo cada 200 ms para procesar gestos
+ * sin bloquear el mainloop de Zigbee.
+ */
+static void gesture_flush_alarm(alarm_timer_arg_t arg)
+{
+    (void)arg;
+    flush_gesture_queue();
+    alarm_timer_schedule(gesture_flush_alarm, 0, 200);
+}
 
 void set_led(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -376,6 +461,12 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
     ESP_ERROR_CHECK(register_router_endpoint());
+
+    /* Arrancar el alarm periodico de vaciado de cola de gestos.
+     * flush_gesture_queue() se ejecuta en contexto del stack Zigbee,
+     * donde el lock ya esta adquirido. */
+    alarm_timer_schedule(gesture_flush_alarm, 0, 200);
+
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
 
@@ -392,6 +483,13 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nvs_flash_init_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME));
     ESP_LOGI(TAG, "Arrancando Router Zigbee Puro");
+
+    /* Cola de gestos: debe existir antes de que button.c pueda encolar. */
+    s_gesture_queue = xQueueCreate(8U, sizeof(uint8_t));
+    if (!s_gesture_queue) {
+        ESP_LOGE(TAG, "No se pudo crear s_gesture_queue -- abort");
+        esp_restart();
+    }
 
     BaseType_t ok = xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main",
                                 ZIGBEE_MAIN_TASK_STACK_SIZE, NULL, 5, NULL);
