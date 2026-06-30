@@ -96,9 +96,12 @@ static void configure_led(void)
  * EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID fires when the OnOff attribute is
  * written after On / Off / Toggle command processing.
  *
- *   attr false (Off) -> night_mode OFF  (LED visible)
- *   attr true  (On)  -> night_mode ON   (LED silenced)
- *   Toggle also hits this path after flipping the attribute.
+ * Struct layout (zcl_common.h):
+ *   ezb_zcl_set_attr_value_message_t {
+ *       ezb_zcl_message_info_t info;
+ *       struct { ezb_zcl_attribute_t attribute; } in;
+ *       struct { ezb_zcl_status_t result;        } out;
+ *   }
  * ========================================================================= */
 static void onoff_action_handler(
         ezb_zcl_core_action_callback_id_t callback_id,
@@ -109,10 +112,10 @@ static void onoff_action_handler(
     ezb_zcl_set_attr_value_message_t *msg =
         (ezb_zcl_set_attr_value_message_t *)message;
 
-    if (msg->info.cluster_id != EZB_ZCL_CLUSTER_ID_ON_OFF) return;
-    if (msg->attr.id         != EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID) return;
+    if (msg->info.cluster_id        != EZB_ZCL_CLUSTER_ID_ON_OFF)       return;
+    if (msg->in.attribute.id        != EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID)   return;
 
-    bool on = *(bool *)msg->attr.data.value;
+    bool on = *(bool *)msg->in.attribute.data.value;
     ESP_LOGI(TAG, "On/Off attr -> %s => night_mode %s",
              on ? "ON" : "OFF", on ? "ON" : "OFF");
     button_remote_trigger(BUTTON_ACTION_NIGHT_MODE);
@@ -121,9 +124,8 @@ static void onoff_action_handler(
 /* =========================================================================
  * ZCL Level Control cluster -- command -> gesture mapping
  *
- * EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID fires when CurrentLevel attribute
- * is written after MoveToLevel / Move / Step commands.
- * Any level change -> tx_toggle.
+ * Cluster ID : EZB_ZCL_CLUSTER_ID_LEVEL            (zcl_type.h, 0x0008)
+ * Attr   ID  : EZB_ZCL_ATTR_LEVEL_CURRENT_LEVEL_ID (level_desc.h, 0x0000)
  * ========================================================================= */
 static void levelctrl_action_handler(
         ezb_zcl_core_action_callback_id_t callback_id,
@@ -134,10 +136,10 @@ static void levelctrl_action_handler(
     ezb_zcl_set_attr_value_message_t *msg =
         (ezb_zcl_set_attr_value_message_t *)message;
 
-    if (msg->info.cluster_id != EZB_ZCL_CLUSTER_ID_LEVEL_CONTROL) return;
-    if (msg->attr.id         != EZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID) return;
+    if (msg->info.cluster_id != EZB_ZCL_CLUSTER_ID_LEVEL)               return;
+    if (msg->in.attribute.id != EZB_ZCL_ATTR_LEVEL_CURRENT_LEVEL_ID)    return;
 
-    uint8_t level = *(uint8_t *)msg->attr.data.value;
+    uint8_t level = *(uint8_t *)msg->in.attribute.data.value;
     ESP_LOGI(TAG, "Level attr -> %u => tx_toggle", level);
     button_remote_trigger(BUTTON_ACTION_TX_TOGGLE);
 }
