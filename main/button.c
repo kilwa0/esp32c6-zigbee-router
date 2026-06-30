@@ -175,6 +175,8 @@ static void pj_expired_cb(TimerHandle_t t)
  * button_is_night_mode() guards in router.c.  Gesture feedback from
  * button.c is NOT suppressed -- the user explicitly triggered it.
  *
+ * Reports scene_id=1 via ZCL Scenes Recall Scene to the coordinator.
+ *
  * @note Volatile; reverts to LED-on on reboot.
  */
 static void do_night_mode_toggle(void)
@@ -187,6 +189,7 @@ static void do_night_mode_toggle(void)
         set_led_locked(_GREEN);
         ESP_LOGI(TAG, "Night mode OFF -- LED restored");
     }
+    router_report_gesture(1);   /* scene 1: night-mode toggle */
 }
 
 /**
@@ -197,6 +200,8 @@ static void do_night_mode_toggle(void)
  * it immediately.  The Zigbee stack is notified via
  * ezb_bdb_open_network(); the pj_timer drives the auto-expiry.
  *
+ * Reports scene_id=2 via ZCL Scenes Recall Scene to the coordinator.
+ *
  * @note Volatile; window does not survive a reboot.
  */
 static void do_permit_join(void)
@@ -205,6 +210,7 @@ static void do_permit_join(void)
         /* Second double-tap: close early */
         xTimerStop(s_pj_timer, 0);
         pj_expired_cb(NULL);
+        router_report_gesture(2);   /* scene 2: permit-join (cierre anticipado) */
         return;
     }
 
@@ -219,6 +225,7 @@ static void do_permit_join(void)
     xTimerChangePeriod(s_pj_timer,
                        pdMS_TO_TICKS((uint32_t)PERMIT_JOIN_S * 1000U), 0);
     xTimerReset(s_pj_timer, 0);
+    router_report_gesture(2);   /* scene 2: permit-join (apertura) */
 }
 
 static void do_tx_toggle(void)
@@ -248,6 +255,7 @@ static void do_tx_toggle(void)
         vTaskDelay(pdMS_TO_TICKS(TX_FLASH_OFF_MS));
     }
     set_led_locked(_GREEN);
+    router_report_gesture(3);   /* scene 3: TX power toggle */
 }
 
 static void do_factory_reset(void)
@@ -255,6 +263,12 @@ static void do_factory_reset(void)
     ESP_LOGW(TAG, "Factory reset: erasing NVS partition '%s'",
              ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     set_led_locked(_RED);
+
+    /* Reportar el gesto ANTES del erase para dar tiempo al stack a enviarlo.
+     * gesture_flush_alarm() tiene un periodo de 200 ms; el vTaskDelay
+     * de 500 ms a continuacion proporciona margen suficiente. */
+    router_report_gesture(4);   /* scene 4: factory reset */
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     esp_err_t err = nvs_flash_erase_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     if (err != ESP_OK) {
@@ -346,10 +360,10 @@ esp_err_t button_init(void)
     if (!s_pj_timer) return ESP_ERR_NO_MEM;
 
     ESP_LOGI(TAG, "BOOT button ready (GPIO%d)", BOOT_BTN_GPIO);
-    ESP_LOGI(TAG, "  1x tap   -> night mode toggle (LED on/off)");
-    ESP_LOGI(TAG, "  2x tap   -> permit-join %u s (2nd tap closes early)", PERMIT_JOIN_S);
-    ESP_LOGI(TAG, "  3x tap   -> TX toggle  %d dBm <-> %d dBm",
+    ESP_LOGI(TAG, "  1x tap   -> night mode toggle (LED on/off) [scene 1]");
+    ESP_LOGI(TAG, "  2x tap   -> permit-join %u s (2nd tap closes early) [scene 2]", PERMIT_JOIN_S);
+    ESP_LOGI(TAG, "  3x tap   -> TX toggle  %d dBm <-> %d dBm [scene 3]",
              ROUTER_TX_POWER_LOW_DBM, ROUTER_TX_POWER_HIGH_DBM);
-    ESP_LOGI(TAG, "  Hold 5 s -> factory reset (NVS erase + reboot)");
+    ESP_LOGI(TAG, "  Hold 5 s -> factory reset (NVS erase + reboot) [scene 4]");
     return ESP_OK;
 }
