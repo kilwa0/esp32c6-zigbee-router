@@ -26,7 +26,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
  *   MINOR -> non-disruptive feature
  *   PATCH -> bugfix only */
-#define ESP_SW_BUILD_ID       "\x05" "4.0.1"
+#define ESP_SW_BUILD_ID       "\x05" "4.1.0"
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
@@ -79,3 +79,22 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
     };
 
 #define ROUTER_PERMIT_JOIN_DURATION_S  60U
+
+/* -------------------------------------------------------------------------
+ * Gesture reporting via ZCL Scenes
+ * ---------------------------------------------------------------------- */
+
+/** Endpoint y grupo usados para reportar gestos del boton via Recall Scene. */
+#define ROUTER_GESTURE_ENDPOINT   ESP_ZIGBEE_RANGE_EXTENDER_EP_ID
+#define ROUTER_GESTURE_GROUP_ID   0x0001U   /* grupo dedicado a gestos     */
+
+/**
+ * @brief Encola un gesto de boton para enviarlo como ZCL Scenes Recall Scene.
+ *
+ * Seguro llamar desde contexto de timer callback de FreeRTOS.
+ * El envio real ocurre en la tarea Zigbee a traves de s_gesture_queue.
+ *
+ * @param scene_id  1=night-mode, 2=permit-join, 3=tx-toggle, 4=factory-reset
+ * @return ESP_OK, ESP_ERR_INVALID_ARG, ESP_ERR_INVALID_STATE, ESP_ERR_NO_MEM
+ */
+esp_err_t router_report_gesture(uint8_t scene_id);
