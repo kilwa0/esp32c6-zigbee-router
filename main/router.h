@@ -10,7 +10,9 @@
 _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
                "Primary channel mask contains invalid 802.15.4 channels");
 
-#define ESP_ZIGBEE_RANGE_EXTENDER_EP_ID   (1)
+/* EP 10: range-extender informational endpoint (Basic cluster server).
+ * EP 1-4 are reserved for gesture On/Off CLIENT reporting (see below). */
+#define ESP_ZIGBEE_RANGE_EXTENDER_EP_ID   (10)
 
 #define ESP_ZIGBEE_TC_LINK_KEY_LEN  16U
 
@@ -26,7 +28,27 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
  *   MINOR -> non-disruptive feature
  *   PATCH -> bugfix only */
-#define ESP_SW_BUILD_ID       "\x05" "4.0.1"
+#define ESP_SW_BUILD_ID       "\x05" "5.0.0"
+
+/* Gesture endpoint IDs for ZCL On/Off Toggle reporting.
+ * Each button gesture sends a Toggle on the corresponding endpoint;
+ * the coordinator (iHost) exposes them as 4 independent switches
+ * in its MQTT local broker (port 1883).
+ *
+ *   EP 1 -> single tap  (night mode toggle)
+ *   EP 2 -> double tap  (permit-join 60 s)
+ *   EP 3 -> triple tap  (TX power toggle 8/20 dBm)
+ *   EP 4 -> hold 5 s    (factory reset) */
+#define ROUTER_GESTURE_EP_1    1U
+#define ROUTER_GESTURE_EP_2    2U
+#define ROUTER_GESTURE_EP_3    3U
+#define ROUTER_GESTURE_EP_4    4U
+
+/* Report a button gesture to the coordinator via ZCL On/Off Toggle.
+ * ep_id must be one of ROUTER_GESTURE_EP_1 .. ROUTER_GESTURE_EP_4.
+ * Called from button.c after each gesture action completes.
+ * Safe to call from any FreeRTOS task; acquires the Zigbee lock internally. */
+void router_report_gesture(uint8_t ep_id);
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
