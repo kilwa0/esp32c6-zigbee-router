@@ -298,7 +298,7 @@ void router_report_gesture(uint8_t ep_id)
             .dst_addr         = EZB_ADDRESS_SHORT(0x0000),
             .dst_ep           = 1,
             .src_ep           = ep_id,
-            .dis_default_resp = 1,
+            .dis_default_rsp = 1,
         },
     };
 
@@ -306,11 +306,10 @@ void router_report_gesture(uint8_t ep_id)
     ezb_err_t err = ezb_zcl_on_off_toggle_cmd_req(&cmd);
     esp_zigbee_lock_release();
 
-    if (err != EZB_ERR_OK) {
-        ESP_LOGW(TAG, "router_report_gesture(EP%u): toggle failed (0x%02x)",
-                 ep_id, (unsigned)err);
+    if (err != EZB_ERR_NONE) {
+        ESP_LOGW(TAG, "router_report_gesture(EP%u): toggle failed (0x%02x)", ep_id, err);
     } else {
-        ESP_LOGI(TAG, "router_report_gesture(EP%u): Toggle -> coord 0x0000", ep_id);
+        ESP_LOGI(TAG, "router_report_gesture(EP%u): Toggle sent -> coord 0x0000", ep_id);
     }
 }
 
