@@ -13,6 +13,8 @@
 #include "ezbee/secur.h"
 #include "ezbee/af.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/on_off_desc.h"
+#include "ezbee/zcl/cluster/on_off.h"
 #include "ezbee/zdo/zdo_dev_srv_disc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -201,6 +203,116 @@ cleanup_dev:
     return ret;
 }
 
+/* Register EP 1-4 as On/Off CLIENT endpoints for gesture reporting.
+ * Each endpoint represents one button gesture; the coordinator (iHost)
+ * exposes them as independent switches in MQTT/UI.
+ *
+ * API verified in espressif/esp-zigbee-sdk:
+ *   ezb_zcl_on_off_create_cluster_desc()  -- on_off_desc.h
+ *   ezb_zcl_on_off_toggle_cmd_req()       -- on_off.h */
+static esp_err_t register_gesture_endpoints(void)
+{
+    static const uint8_t gesture_eps[] = {
+        ROUTER_GESTURE_EP_1,
+        ROUTER_GESTURE_EP_2,
+        ROUTER_GESTURE_EP_3,
+        ROUTER_GESTURE_EP_4,
+    };
+
+    for (int i = 0; i < (int)(sizeof(gesture_eps) / sizeof(gesture_eps[0])); i++) {
+        uint8_t ep_id = gesture_eps[i];
+
+        ezb_af_device_desc_t dev_desc = ezb_af_create_device_desc();
+        if (!dev_desc) {
+            ESP_LOGE(TAG, "gesture EP%u: no se pudo crear device_desc", ep_id);
+            return ESP_ERR_NO_MEM;
+        }
+
+        ezb_af_ep_config_t ep_config = {
+            .ep_id              = ep_id,
+            .app_profile_id     = EZB_AF_HA_PROFILE_ID,
+            .app_device_id      = 0x0103,   /* HA On/Off Switch */
+            .app_device_version = 0,
+        };
+        ezb_af_ep_desc_t ep_desc = ezb_af_create_endpoint_desc(&ep_config);
+        if (!ep_desc) {
+            ESP_LOGE(TAG, "gesture EP%u: no se pudo crear ep_desc", ep_id);
+            ezb_af_free_device_desc(dev_desc);
+            return ESP_ERR_NO_MEM;
+        }
+
+        /* On/Off CLIENT -- NULL config is valid: client has no mandatory
+         * attributes. EZB_ZCL_CLUSTER_CLIENT verified in on_off_desc.h. */
+        ezb_zcl_cluster_desc_t onoff_desc =
+            ezb_zcl_on_off_create_cluster_desc(NULL, EZB_ZCL_CLUSTER_CLIENT);
+        if (!onoff_desc) {
+            ESP_LOGE(TAG, "gesture EP%u: no se pudo crear On/Off client desc", ep_id);
+            ezb_af_free_endpoint_desc(ep_desc);
+            ezb_af_free_device_desc(dev_desc);
+            return ESP_ERR_NO_MEM;
+        }
+
+        esp_err_t ret = ezb_af_endpoint_add_cluster_desc(ep_desc, onoff_desc);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "gesture EP%u: add cluster failed: %s",
+                     ep_id, esp_err_to_name(ret));
+            ezb_af_free_endpoint_desc(ep_desc);
+            ezb_af_free_device_desc(dev_desc);
+            return ret;
+        }
+
+        ret = ezb_af_device_add_endpoint_desc(dev_desc, ep_desc);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "gesture EP%u: add ep to device failed: %s",
+                     ep_id, esp_err_to_name(ret));
+            ezb_af_free_device_desc(dev_desc);
+            return ret;
+        }
+
+        ret = ezb_af_device_desc_register(dev_desc);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "gesture EP%u: register failed: %s",
+                     ep_id, esp_err_to_name(ret));
+            ezb_af_free_device_desc(dev_desc);
+            return ret;
+        }
+
+        ESP_LOGI(TAG, "Gesture EP%u registrado (On/Off CLIENT, HA switch 0x0103)", ep_id);
+    }
+    return ESP_OK;
+}
+
+/* Send ZCL On/Off Toggle to the coordinator (0x0000) from the gesture
+ * endpoint corresponding to ep_id.  Safe to call from any FreeRTOS task;
+ * acquires the Zigbee stack lock internally.
+ *
+ * cmd_ctrl fields:
+ *   dst_addr         -- coordinator short address 0x0000
+ *   dst_ep           -- 1 (coordinator EP; iHost binds switches on EP 1)
+ *   src_ep           -- gesture endpoint (1-4)
+ *   dis_default_resp -- 1: suppress ZCL Default Response frame */
+void router_report_gesture(uint8_t ep_id)
+{
+    ezb_zcl_on_off_cmd_t cmd = {
+        .cmd_ctrl = {
+            .dst_addr         = EZB_ADDRESS_SHORT(0x0000),
+            .dst_ep           = 1,
+            .src_ep           = ep_id,
+            .dis_default_rsp = 1,
+        },
+    };
+
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    ezb_err_t err = ezb_zcl_on_off_toggle_cmd_req(&cmd);
+    esp_zigbee_lock_release();
+
+    if (err != EZB_ERR_NONE) {
+        ESP_LOGW(TAG, "router_report_gesture(EP%u): toggle failed (0x%02x)", ep_id, err);
+    } else {
+        ESP_LOGI(TAG, "router_report_gesture(EP%u): Toggle sent -> coord 0x0000", ep_id);
+    }
+}
+
 static const char *bdb_status_to_str(ezb_bdb_comm_status_t status)
 {
     switch (status) {
@@ -376,6 +488,7 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
     ESP_ERROR_CHECK(register_router_endpoint());
+    ESP_ERROR_CHECK(register_gesture_endpoints());
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
 

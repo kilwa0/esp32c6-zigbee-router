@@ -112,9 +112,9 @@ static void tap_window_cb(TimerHandle_t t)
     uint8_t taps = s_tap_count;
     s_tap_count  = 0;
 
-    if      (taps == 1) do_night_mode_toggle();
-    else if (taps == 2) do_permit_join();
-    else if (taps >= 3) do_tx_toggle();
+    if      (taps == 1) { do_night_mode_toggle(); router_report_gesture(ROUTER_GESTURE_EP_1); }
+    else if (taps == 2) { do_permit_join();        router_report_gesture(ROUTER_GESTURE_EP_2); }
+    else if (taps >= 3) { do_tx_toggle();          router_report_gesture(ROUTER_GESTURE_EP_3); }
 }
 
 /* -------------------------------------------------------------------------
@@ -125,6 +125,7 @@ static void hold_cb(TimerHandle_t t)
     (void)t;
     ESP_LOGW(TAG, "Hold 5 s -- factory reset triggered");
     start_blink(true, _MAGENTA);
+    router_report_gesture(ROUTER_GESTURE_EP_4);
     vTaskDelay(pdMS_TO_TICKS(600));
     stop_blink();
     do_factory_reset();
