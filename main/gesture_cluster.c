@@ -123,22 +123,26 @@ esp_err_t gesture_cluster_register(void)
 /* -------------------------------------------------------------------------
  * gesture_cluster_send_cmd()
  *
- * Fills ezb_zcl_custom_cluster_cmd_t (= ezb_zcl_custom_cmd_t) and calls
- * ezb_zcl_custom_cluster_cmd_req() under the Zigbee stack lock.
+ * ezb_address_t layout (from ezbee/core_types.h):
  *
- * dst_addr.addr_mode   = EZB_ADDR_MODE_16_ENDP  (short addr + EP)
- * dst_addr.addr_short  = 0x0000 (coordinator)
- * fc.direction         = EZB_ZCL_CMD_DIRECTION_TO_SRV (0 = to server)
- * fc.manuf_specific    = 0  (cluster-specific frame; manuf_code unused)
- * fc.dis_default_rsp   = 1  (no ack frame needed for reporting)
+ *   typedef struct ezb_address_s {
+ *       ezb_addr_mode_t addr_mode;   // EZB_ADDR_MODE_16_ENDP, etc.
+ *       ezb_addr_t u;                // union { uint16_t addr_short; ... }
+ *   } ezb_address_t;
+ *
+ * So the short address lives at  dst_addr.u.addr_short, NOT dst_addr.addr_short.
+ *
+ * fc.direction       = EZB_ZCL_CMD_DIRECTION_TO_SRV (frame goes to server)
+ * fc.manuf_specific  = 0   (standard cluster-specific frame)
+ * fc.dis_default_rsp = 1   (no default-response ack needed)
  * ---------------------------------------------------------------------- */
 esp_err_t gesture_cluster_send_cmd(uint8_t cmd_id, uint8_t value)
 {
     ezb_zcl_custom_cluster_cmd_t cmd = {
         .cmd_ctrl = {
             .dst_addr = {
-                .addr_mode  = EZB_ADDR_MODE_16_ENDP,
-                .addr_short = COORD_SHORT_ADDR,
+                .addr_mode    = EZB_ADDR_MODE_16_ENDP,
+                .u.addr_short = COORD_SHORT_ADDR,   /* coordinator 0x0000 */
             },
             .dst_ep     = COORD_EP_ID,
             .src_ep     = GESTURE_EP_ID,
