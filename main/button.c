@@ -1,5 +1,6 @@
 #include "button.h"
 #include "router.h"
+#include "gesture_cluster.h"    /* <-- NEW: gesture reporting */
 
 #include "driver/gpio.h"
 #include "esp_check.h"
@@ -162,6 +163,9 @@ static void pj_expired_cb(TimerHandle_t t)
     esp_zigbee_lock_release();
     set_led_locked(_GREEN);
     ESP_LOGI(TAG, "Permit-join window closed (timeout)");
+
+    /* Notify coordinator: window closed */
+    gesture_cluster_send_cmd(GESTURE_CMD_PERMIT_JOIN, 0x00);
 }
 
 /* -------------------------------------------------------------------------
@@ -175,6 +179,8 @@ static void pj_expired_cb(TimerHandle_t t)
  * button_is_night_mode() guards in router.c.  Gesture feedback from
  * button.c is NOT suppressed -- the user explicitly triggered it.
  *
+ * After toggling, sends GESTURE_CMD_NIGHT_MODE to the coordinator.
+ *
  * @note Volatile; reverts to LED-on on reboot.
  */
 static void do_night_mode_toggle(void)
@@ -187,6 +193,9 @@ static void do_night_mode_toggle(void)
         set_led_locked(_GREEN);
         ESP_LOGI(TAG, "Night mode OFF -- LED restored");
     }
+
+    /* Report to coordinator: 0x01 = on, 0x00 = off */
+    gesture_cluster_send_cmd(GESTURE_CMD_NIGHT_MODE, s_night_mode ? 0x01 : 0x00);
 }
 
 /**
@@ -197,6 +206,8 @@ static void do_night_mode_toggle(void)
  * it immediately.  The Zigbee stack is notified via
  * ezb_bdb_open_network(); the pj_timer drives the auto-expiry.
  *
+ * Sends GESTURE_CMD_PERMIT_JOIN (0x01=open, 0x00=close).
+ *
  * @note Volatile; window does not survive a reboot.
  */
 static void do_permit_join(void)
@@ -205,6 +216,7 @@ static void do_permit_join(void)
         /* Second double-tap: close early */
         xTimerStop(s_pj_timer, 0);
         pj_expired_cb(NULL);
+        /* pj_expired_cb already sends PERMIT_JOIN 0x00 */
         return;
     }
 
@@ -219,6 +231,9 @@ static void do_permit_join(void)
     xTimerChangePeriod(s_pj_timer,
                        pdMS_TO_TICKS((uint32_t)PERMIT_JOIN_S * 1000U), 0);
     xTimerReset(s_pj_timer, 0);
+
+    /* Report to coordinator: window opened */
+    gesture_cluster_send_cmd(GESTURE_CMD_PERMIT_JOIN, 0x01);
 }
 
 static void do_tx_toggle(void)
@@ -248,6 +263,9 @@ static void do_tx_toggle(void)
         vTaskDelay(pdMS_TO_TICKS(TX_FLASH_OFF_MS));
     }
     set_led_locked(_GREEN);
+
+    /* Report to coordinator: 0x01 = high power, 0x00 = normal */
+    gesture_cluster_send_cmd(GESTURE_CMD_TX_TOGGLE, s_high_power ? 0x01 : 0x00);
 }
 
 static void do_factory_reset(void)
@@ -255,6 +273,9 @@ static void do_factory_reset(void)
     ESP_LOGW(TAG, "Factory reset: erasing NVS partition '%s'",
              ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     set_led_locked(_RED);
+
+    /* Report BEFORE erasing -- device will reboot */
+    gesture_cluster_send_cmd(GESTURE_CMD_FACTORY_RESET, 0x01);
 
     esp_err_t err = nvs_flash_erase_partition(ESP_ZIGBEE_STORAGE_PARTITION_NAME);
     if (err != ESP_OK) {
