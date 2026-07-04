@@ -4,6 +4,13 @@
  *
  * Follows the same patterns as router.c and the Espressif
  * data_producer example (esp-zigbee-sdk/examples/customized_devices).
+ *
+ * API verified against:
+ *   espressif/esp-zigbee-sdk @ cc8c7e7
+ *   components/esp-zigbee-lib/include/ezbee/core_types.h
+ *   components/esp-zigbee-lib/include/ezbee/zcl/zcl_common.h
+ *   components/esp-zigbee-lib/include/ezbee/zcl/zcl_type.h
+ *   components/esp-zigbee-lib/include/ezbee/zcl/cluster/custom.h
  */
 
 #include "gesture_cluster.h"
@@ -123,34 +130,47 @@ esp_err_t gesture_cluster_register(void)
 /* -------------------------------------------------------------------------
  * gesture_cluster_send_cmd()
  *
- * ezb_address_t layout (from ezbee/core_types.h):
+ * ezb_address_t layout (ezbee/core_types.h):
+ *
+ *   typedef union ezb_addr_u {
+ *       ezb_shortaddr_t short_addr;    // <-- campo correcto
+ *       ezb_grpaddr_t   group_addr;
+ *       ezb_extaddr_t   extended_addr;
+ *   } ezb_addr_t;
  *
  *   typedef struct ezb_address_s {
- *       ezb_addr_mode_t addr_mode;   // EZB_ADDR_MODE_16_ENDP, etc.
- *       ezb_addr_t u;                // union { uint16_t addr_short; ... }
+ *       ezb_addr_mode_t addr_mode;     // EZB_ADDR_MODE_SHORT = 2
+ *       ezb_addr_t u;
  *   } ezb_address_t;
  *
- * So the short address lives at  dst_addr.u.addr_short, NOT dst_addr.addr_short.
+ * Equivalente al macro EZB_ADDRESS_SHORT(addr) definido en core_types.h.
  *
- * fc.direction       = EZB_ZCL_CMD_DIRECTION_TO_SRV (frame goes to server)
- * fc.manuf_specific  = 0   (standard cluster-specific frame)
- * fc.dis_default_rsp = 1   (no default-response ack needed)
+ * fc.direction       = EZB_ZCL_CMD_DIRECTION_TO_SRV (0) — router envía al server del coordinador
+ * fc.manuf_specific  = 0   (frame cluster-specific estándar)
+ * fc.dis_default_rsp = 1   (sin ack de default-response)
  * ---------------------------------------------------------------------- */
 esp_err_t gesture_cluster_send_cmd(uint8_t cmd_id, uint8_t value)
 {
     ezb_zcl_custom_cluster_cmd_t cmd = {
         .cmd_ctrl = {
+            /*
+             * EZB_ADDR_MODE_SHORT = 2  (core_types.h, enum ezb_addr_mode_e)
+             * .u.short_addr            (ezb_addr_t field name en core_types.h)
+             *
+             * NOTE: EZB_ADDR_MODE_16_ENDP no existe en el SDK —
+             *       el modo correcto para dirección unicast 16-bit es EZB_ADDR_MODE_SHORT.
+             */
             .dst_addr = {
-                .addr_mode    = EZB_ADDR_MODE_16_ENDP,
-                .u.addr_short = COORD_SHORT_ADDR,   /* coordinator 0x0000 */
+                .addr_mode    = EZB_ADDR_MODE_SHORT,
+                .u.short_addr = COORD_SHORT_ADDR,   /* coordinador 0x0000 */
             },
             .dst_ep     = COORD_EP_ID,
             .src_ep     = GESTURE_EP_ID,
             .cluster_id = GESTURE_CLUSTER_ID,
-            .manuf_code = EZB_ZCL_STD_MANUF_CODE,
+            .manuf_code = EZB_ZCL_STD_MANUF_CODE,  /* 0x0000 — zcl_type.h */
             .fc = {
                 .manuf_specific  = 0,
-                .direction       = EZB_ZCL_CMD_DIRECTION_TO_SRV,
+                .direction       = EZB_ZCL_CMD_DIRECTION_TO_SRV, /* 0 — zcl_type.h */
                 .dis_default_rsp = 1,
             },
         },
