@@ -16,8 +16,8 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 
 #define ESP_ZIGBEE_STORAGE_PARTITION_NAME "zb_storage"
 
-#define ESP_MANUFACTURER_NAME "\x09" "ESPRESSIF"
-#define ESP_MODEL_IDENTIFIER  "\x08" "ESP32-C6"
+#define ESP_MANUFACTURER_NAME "\x03" "DIY"
+#define ESP_MODEL_IDENTIFIER  "\x11" "OnOffSwitch"
 
 /* Firmware version string exposed via ZCL Basic cluster, attribute SWBuildID (0x4000).
  * Format: ZCL character string (Pascal-style, length-prefixed).
@@ -26,7 +26,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
  *   MINOR -> non-disruptive feature
  *   PATCH -> bugfix only */
-#define ESP_SW_BUILD_ID       "\x05" "4.0.1"
+#define ESP_SW_BUILD_ID       "\x05" "5.0.0"
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
