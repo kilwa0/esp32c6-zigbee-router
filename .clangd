@@ -7,3 +7,5 @@ Index:
 
 Diagnostics:
   UnusedIncludes: None
+  ClangTidy:
+    FastCheckFilter: Loose
