@@ -1,15 +1,16 @@
 #include "silent_mode_zcl.h"
-#include "esp_zigbee.h"
+
 #include "esp_log.h"
+#include "esp_zigbee.h"
+#include "freertos/FreeRTOS.h"
+
 #include "router.h"
 
 static const char *TAG = "SILENT_MODE_ZCL";
 
-
-esp_err_t silent_mode_zcl_sync(bool enabled) {
-    uint8_t zb_val = enabled ? 1 : 0;
+esp_err_t silent_mode_zcl_sync(bool silent_mode_enabled) {
+    uint8_t zb_val = silent_mode_enabled ? 0 : 1;
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    
     ezb_err_t err = ezb_zcl_set_attr_value(
                         EP_ID,
                         EZB_ZCL_CLUSTER_ID_ON_OFF,

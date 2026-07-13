@@ -247,14 +247,14 @@ El botón BOOT del DevKitC-1 es un GPIO de propósito general una vez que el fir
 
 ### Silent mode / modo silencioso
 
-La pulsación simple del botón BOOT alterna el modo silencioso del LED de estado. Desde la versión 6.0.0, este cambio no solo actúa localmente sobre el LED, sino que también sincroniza el estado del endpoint Zigbee asociado al modo silencioso mediante `silent_mode_zcl_sync()`, de forma que el cliente puede ver el nuevo estado cuando el cambio se origina en el botón hardware.[cite:47]
+La pulsación simple del botón BOOT alterna el modo silencioso del LED de estado. Desde la versión 6.0.0, este cambio no solo actúa localmente sobre el LED, sino que también sincroniza el estado del endpoint Zigbee asociado al modo silencioso mediante `silent_mode_zcl_sync()`, de forma que el cliente puede ver el nuevo estado cuando el cambio se origina en el botón hardware.
 
 Estado por defecto al arrancar:
-- El modo silencioso arranca desactivado (`night mode OFF`), por lo que el LED de estado está habilitado tras el arranque.[cite:47]
+- El modo silencioso arranca desactivado (`night mode OFF`), por lo que el LED de estado está habilitado tras el arranque.
 
 Identidad Zigbee:
-- Modelo expuesto en Basic cluster: `ESP32-C6 Zigbee Router (DIY)`.[cite:47]
-- Versión de firmware expuesta: `6.0.0`.[cite:47]
+- Modelo expuesto en Basic cluster: `ESP32-C6 Zigbee Router (DIY)`.
+- Versión de firmware expuesta: `6.0.0`.
 
 ---
 
