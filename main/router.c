@@ -294,7 +294,7 @@ esp_err_t esp_zigbee_register_endpoints(void)
 {
     ezb_af_device_desc_t          dev_desc   = ezb_af_create_device_desc();
     ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_CONFIG();
-    ezb_af_ep_desc_t              ep_desc    = ezb_zha_create_on_off_light(1, &light_cfg);
+    ezb_af_ep_desc_t              ep_desc    = ezb_zha_create_on_off_light(EP_ID, &light_cfg);
     ezb_zcl_cluster_desc_t        basic_desc = {0};
 
     basic_desc = ezb_af_endpoint_get_cluster_desc(ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
@@ -305,7 +305,7 @@ esp_err_t esp_zigbee_register_endpoints(void)
     ESP_ERROR_CHECK(ezb_af_device_desc_register(dev_desc));
 
     ezb_zcl_core_action_handler_register(esp_zigbee_zcl_core_action_handler);
-    ESP_LOGI(TAG, "Zigbee endpoints registered: On/Off Light (EP 10)");
+    ESP_LOGI(TAG, "Zigbee endpoints registered: On/Off Light (EP %d)", EP_ID);
 
     return ESP_OK;
 }
