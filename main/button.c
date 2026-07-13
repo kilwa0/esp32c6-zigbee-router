@@ -49,7 +49,7 @@ extern void set_led_locked(uint8_t r, uint8_t g, uint8_t b);
 static volatile uint8_t  s_tap_count  = 0;
 static volatile bool     s_high_power = false;   /* boot default: 8 dBm  */
 static volatile bool     s_holding    = false;   /* button currently held */
-static volatile bool     s_night_mode = false;   /* LED silenced         */
+static volatile bool     s_night_mode = true;   /* LED silenced         */
 static volatile bool     s_permit_join_active = false;
 
 static TimerHandle_t     s_tap_timer   = NULL;
@@ -72,13 +72,14 @@ static void tap_window_cb(TimerHandle_t t);
 static void hold_cb(TimerHandle_t t);
 static void blink_cb(TimerHandle_t t);
 static void pj_expired_cb(TimerHandle_t t);
-static void do_night_mode_toggle(void);
 static void do_permit_join(void);
 static void do_tx_toggle(void);
 static void do_factory_reset(void);
 static void start_blink(bool fast, uint8_t r, uint8_t g, uint8_t b);
 static void stop_blink(void);
 static void btn_isr(void *arg);
+bool do_night_mode_toggle(bool power);
+
 
 /* -------------------------------------------------------------------------
  * ISR -- both edges
@@ -112,7 +113,7 @@ static void tap_window_cb(TimerHandle_t t)
     uint8_t taps = s_tap_count;
     s_tap_count  = 0;
 
-    if      (taps == 1) do_night_mode_toggle();
+    if      (taps == 1) do_night_mode_toggle(NULL);
     else if (taps == 2) do_permit_join();
     else if (taps >= 3) do_tx_toggle();
 }
@@ -167,28 +168,6 @@ static void pj_expired_cb(TimerHandle_t t)
 /* -------------------------------------------------------------------------
  * Actions
  * ---------------------------------------------------------------------- */
-
-/**
- * @brief Toggle LED night mode (single-tap).
- *
- * In night mode all Zigbee-state LED updates are suppressed by
- * button_is_night_mode() guards in router.c.  Gesture feedback from
- * button.c is NOT suppressed -- the user explicitly triggered it.
- *
- * @note Volatile; reverts to LED-on on reboot.
- */
-static void do_night_mode_toggle(void)
-{
-    s_night_mode = !s_night_mode;
-    if (s_night_mode) {
-        set_led_locked(_OFF);
-        ESP_LOGI(TAG, "Night mode ON -- LED silenced");
-    } else {
-        set_led_locked(_GREEN);
-        ESP_LOGI(TAG, "Night mode OFF -- LED restored");
-    }
-}
-
 /**
  * @brief Open or close a permit-join window (double-tap).
  *
@@ -304,7 +283,27 @@ bool button_is_night_mode(void)
 {
     return s_night_mode;
 }
-
+/**
+ * @brief Toggle LED night mode (single-tap).
+ *
+ * In night mode all Zigbee-state LED updates are suppressed by
+ * button_is_night_mode() guards in router.c.  Gesture feedback from
+ * button.c is NOT suppressed -- the user explicitly triggered it.
+ *
+ * @note Volatile; reverts to LED-on on reboot.
+ */
+bool do_night_mode_toggle(bool power)
+{
+    s_night_mode = !s_night_mode;
+    if (s_night_mode) {
+        set_led_locked(_OFF);
+        ESP_LOGI(TAG, "Night mode ON -- LED silenced");
+    } else {
+        set_led_locked(_GREEN);
+        ESP_LOGI(TAG, "Night mode OFF -- LED restored");
+    }
+    return s_night_mode;
+}
 esp_err_t button_init(void)
 {
     gpio_config_t cfg = {

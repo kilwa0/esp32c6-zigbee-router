@@ -294,10 +294,8 @@ Boost mode is **volatile**: reverts to 8 dBm on the next reboot. The triple-tap 
 
 | Parameter | Value |
 |-----------|-------|
-| Endpoint ID | 1 (`ESP_ZIGBEE_RANGE_EXTENDER_EP_ID`) |
-| Profile | HA (`EZB_AF_HA_PROFILE_ID` / `0x0104`) |
-| Device ID | Range Extender (`0x0008`) |
-| Power Source (Basic cluster) | `SINGLE_PHASE_MAINS` (`0x01`) |
+| Cluster | `EZB_ZHA_ON_OFF_LIGHT_CONFIG` |
+| Endpoint ID | 1 (`EP_ID`) |
 | Server clusters | Basic (with `ManufacturerName`, `ModelIdentifier`, and `SWBuildID`) |
 
 ### ZCL attribute SWBuildID

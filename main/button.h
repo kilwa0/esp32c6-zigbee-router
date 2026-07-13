@@ -27,3 +27,4 @@ esp_err_t button_init(void);
  * @return false Normal operation; LED updates proceed as usual.
  */
 bool button_is_night_mode(void);
+bool do_night_mode_toggle(bool power);
