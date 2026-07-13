@@ -300,11 +300,11 @@ bool do_night_mode_toggle(bool power)
     if (s_night_mode) {
         set_led_locked(_OFF);
         ESP_LOGI(TAG, "Night mode ON -- LED silenced");
-        silent_mode_zcl_sync(false);
+        silent_mode_zcl_sync(true);
     } else {
         set_led_locked(_GREEN);
         ESP_LOGI(TAG, "Night mode OFF -- LED restored");
-        silent_mode_zcl_sync(true);
+        silent_mode_zcl_sync(false);
     }
     return s_night_mode;
 }
