@@ -49,7 +49,7 @@ extern void set_led_locked(uint8_t r, uint8_t g, uint8_t b);
 static volatile uint8_t  s_tap_count  = 0;
 static volatile bool     s_high_power = false;   /* boot default: 8 dBm  */
 static volatile bool     s_holding    = false;   /* button currently held */
-static volatile bool     s_night_mode = false;   /* LED silenced         */
+static volatile bool     s_night_mode = true;   /* LED silenced         */
 static volatile bool     s_permit_join_active = false;
 
 static TimerHandle_t     s_tap_timer   = NULL;
