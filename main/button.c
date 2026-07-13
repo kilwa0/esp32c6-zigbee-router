@@ -10,6 +10,8 @@
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "silent_mode_zcl.h"
+#include <stdbool.h>
 
 static const char *TAG = "BUTTON";
 
@@ -49,7 +51,7 @@ extern void set_led_locked(uint8_t r, uint8_t g, uint8_t b);
 static volatile uint8_t  s_tap_count  = 0;
 static volatile bool     s_high_power = false;   /* boot default: 8 dBm  */
 static volatile bool     s_holding    = false;   /* button currently held */
-static volatile bool     s_night_mode = true;   /* LED silenced         */
+static volatile bool     s_night_mode = false;   /* LED silenced         */
 static volatile bool     s_permit_join_active = false;
 
 static TimerHandle_t     s_tap_timer   = NULL;
@@ -298,9 +300,11 @@ bool do_night_mode_toggle(bool power)
     if (s_night_mode) {
         set_led_locked(_OFF);
         ESP_LOGI(TAG, "Night mode ON -- LED silenced");
+        silent_mode_zcl_sync(true);
     } else {
         set_led_locked(_GREEN);
         ESP_LOGI(TAG, "Night mode OFF -- LED restored");
+        silent_mode_zcl_sync(false);
     }
     return s_night_mode;
 }

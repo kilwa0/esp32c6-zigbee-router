@@ -247,6 +247,17 @@ The DevKitC-1 BOOT button is a general-purpose GPIO once firmware is running. Th
 
 > **Note on Permit Join**: the double-tap opens a local Permit Join window. Any device that joins during this window will use the standard HA trust model. The window closes automatically; it does not persist across reboots.
 
+### Silent mode
+
+A single press on the BOOT button toggles the status LED silent mode. Since version 6.0.0, this change is no longer only a local LED action: it also synchronizes the Zigbee endpoint state associated with silent mode through `silent_mode_zcl_sync()`, so the client can observe the new state when the change originates from the hardware button.
+
+Default boot state:
+- Silent mode now starts disabled (`night mode OFF`), so the status LED is enabled after boot.
+
+Zigbee identity:
+- Basic cluster model identifier: `ESP32-C6 Zigbee Router (DIY)`.
+- Exposed firmware version: `6.0.0`.
+
 ---
 
 ## TX power (IEEE 802.15.4)

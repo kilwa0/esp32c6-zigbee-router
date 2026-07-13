@@ -21,6 +21,18 @@ _No changes pending beyond v5.0.0._
 
 ---
 
+## 6.0.0
+
+### Added
+- Added Zigbee state synchronization for the silent mode endpoint when the hardware button toggles the mode.[cite:47]
+
+### Changed
+- Night mode now defaults to OFF at boot, so the status LED starts enabled.[cite:47]
+- Updated the Zigbee model identifier to `ESP32-C6 Zigbee Router (DIY)`.[cite:47]
+
+### Fixed
+- Fixed the mismatch between local hardware button changes and the client-visible On/Off state by calling `silent_mode_zcl_sync()` after button toggles.[cite:47]
+
 ## [5.0.0] - 2026-07-13
 
 ### Addedd
