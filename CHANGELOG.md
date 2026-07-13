@@ -17,9 +17,14 @@ Versioned according to [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
-_No changes pending beyond v4.0.1._
+_No changes pending beyond v5.0.0._
 
 ---
+
+## [5.0.0] - 2026-07-13
+
+### Addedd
+- **Exposed Single-tap gesture through ZCL** Now you can configure ON/OFF led light using cluster capabilities
 
 ## [4.0.1] - 2026-06-21
 
