@@ -17,7 +17,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 #define ESP_ZIGBEE_STORAGE_PARTITION_NAME "zb_storage"
 
 #define ESP_MANUFACTURER_NAME "\x03" "DIY"
-#define ESP_MODEL_IDENTIFIER  "\x1C" "ESP32-C6 Zigbee Router (DIY)"
+#define ESP_MODEL_IDENTIFIER  "\x1B" "ESP32-C6 Zigbee Router (DIY)"
 
 /* Firmware version string exposed via ZCL Basic cluster, attribute SWBuildID (0x4000).
  * Format: ZCL character string (Pascal-style, length-prefixed).
