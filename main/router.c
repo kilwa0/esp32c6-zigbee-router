@@ -336,9 +336,15 @@ void ota_upgrade_client_handle_ota_progress(ezb_zcl_ota_upgrade_client_progress_
         ESP_LOGI(TAG, "OTA Finish: count_down_delay=%ld seconds", message->in.finish.count_down_delay);
         esp_restart();
         break;
-    case EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT:
+        case EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT:
         ret = esp_ota_abort(s_ota_handle);
         ESP_LOGW(TAG, "OTA Abort");
+        if (s_ota_file_parser) {
+            esp_zb_free_ota_file_parser(s_ota_file_parser);
+            s_ota_file_parser = NULL;
+        }
+        s_ota_handle = 0;
+        s_ota_partition = NULL;
         break;
     default:
         ESP_LOGW(TAG, "Unknown OTA progress status: %d", message->in.progress);
