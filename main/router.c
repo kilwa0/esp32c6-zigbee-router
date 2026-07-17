@@ -356,33 +356,49 @@ static void esp_zigbee_zcl_core_action_handler(ezb_zcl_core_action_callback_id_t
 
 esp_err_t esp_zigbee_register_endpoints(void)
 {
+    ezb_af_ep_config_t ep_config = {
+        .ep_id              = EP_ID,
+        .app_profile_id     = EZB_AF_HA_PROFILE_ID,
+        .app_device_id      = EZB_ZHA_ON_OFF_LIGHT_DEVICE_ID,
+        .app_device_version = 0,
+    };
     ezb_af_device_desc_t          dev_desc   = ezb_af_create_device_desc();
-    ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_CONFIG();
-    ezb_af_ep_desc_t              ep_desc    = ezb_zha_create_on_off_light(EP_ID, &light_cfg);
+    ezb_af_ep_desc_t              ep_desc    = ezb_af_create_endpoint_desc(&ep_config);
     ezb_zcl_cluster_desc_t        basic_desc = {0};
-    //ezb_zcl_cluster_desc_t ota_client_desc = EZB_INVALID_ZCL_CLUSTER_DESC;
+    ezb_zcl_cluster_desc_t        ota_client_desc = EZB_INVALID_ZCL_CLUSTER_DESC;
 
     ezb_zcl_ota_upgrade_cluster_client_config_t client_default_cfg = {
         .upgrade_server_id    = EZB_ZCL_OTA_UPGRADE_UPGRADE_SERVER_ID_DEFAULT_VALUE,
         .file_offset          = 0,
         .image_upgrade_status = EZB_ZCL_OTA_UPGRADE_IMAGE_UPGRADE_STATUS_DEFAULT_VALUE,
-        .manufacturer_id      = 0x1234,
-        .image_type_id        = 0x5678,
+        .manufacturer_id      = 0x131B,
+        .image_type_id        = 0x0001,
     };
 
+    ESP_LOGI(TAG, "1");
     basic_desc = ezb_af_endpoint_get_cluster_desc(ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
+    ESP_LOGI(TAG, "2");
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)ESP_MANUFACTURER_NAME);
+    ESP_LOGI(TAG, "2");
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (void *)ESP_MODEL_IDENTIFIER);
+    ESP_LOGI(TAG, "4");
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, (void *)ESP_SW_BUILD_ID);
     // MEJORADO
-    // ota_client_desc = ezb_zcl_ota_upgrade_create_cluster_desc(&client_default_cfg, EZB_ZCL_CLUSTER_CLIENT);
-    // ESP_RETURN_ON_FALSE(ota_client_desc != EZB_INVALID_ZCL_CLUSTER_DESC, ESP_FAIL, TAG,
-    //                     "OTA client cluster desc invalido");
-    // ESP_ERROR_CHECK(ezb_af_endpoint_add_cluster_desc(ep_desc, ota_client_desc));
+    ESP_LOGI(TAG, "5");
+    ota_client_desc = ezb_zcl_ota_upgrade_create_cluster_desc(&client_default_cfg, EZB_ZCL_CLUSTER_CLIENT);
+    ESP_LOGI(TAG, "6");
+    ESP_RETURN_ON_FALSE(ota_client_desc != EZB_INVALID_ZCL_CLUSTER_DESC, ESP_FAIL, TAG,
+                        "OTA client cluster desc invalido");
+    ESP_LOGI(TAG, "7");
+                        ESP_ERROR_CHECK(ezb_af_endpoint_add_cluster_desc(ep_desc, ota_client_desc));
+    ESP_LOGI(TAG, "8");
     ESP_ERROR_CHECK(ezb_zcl_ota_upgrade_set_download_block_size(EP_ID, 223));
+    ESP_LOGI(TAG, "9");
     ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev_desc, ep_desc));
+    ESP_LOGI(TAG, "10");
     ESP_ERROR_CHECK(ezb_af_device_desc_register(dev_desc));
 
+    ESP_LOGI(TAG, "11");
     ezb_zcl_core_action_handler_register(esp_zigbee_zcl_core_action_handler);
     ESP_LOGI(TAG, "Zigbee endpoints registered: On/Off Light (EP %d)", EP_ID);
 
