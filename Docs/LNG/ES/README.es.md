@@ -197,7 +197,10 @@ El cliente OTA informa el progreso a través de los siguientes callbacks del cli
 |-------|-------------|
 | `EZB_ZCL_OTA_UPGRADE_PROGRESS_START` | Actualización OTA iniciada |
 | `EZB_ZCL_OTA_UPGRADE_PROGRESS_RECEIVING` | Recibiendo bloques de datos de imagen |
-| `EZB_ZCL_OTA_UPGRADE_PROGRESS_DONE` | Descarga de imagen completa, verificando/aplicando |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_CHECK` | Descarga completa; verificando imagen |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_APPLY` | Aplicando imagen y cambiando partición de arranque |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_FINISH` | Actualización finalizada; reiniciando |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT` | Actualización abortada; limpieza de estado |
 
 ### Requisitos de compilación
 
