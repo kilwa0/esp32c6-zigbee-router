@@ -17,6 +17,36 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
 #define ESP_MANUFACTURER_NAME "\x03" "DIY"
 #define ESP_MODEL_IDENTIFIER  "\x1B" "ESP32-C6 Zigbee Router (DIY)"
 
+#define EZB_ZHA_ON_OFF_LIGHT_KILWA_CONFIG()                                              \
+    {                                                                              \
+        .basic_cfg =                                                               \
+            {                                                                      \
+                .zcl_version  = EZB_ZCL_BASIC_ZCL_VERSION_DEFAULT_VALUE,           \
+                .power_source = EZB_ZCL_BASIC_POWER_SOURCE_DEFAULT_VALUE,          \
+            },                                                                     \
+        .identify_cfg =                                                            \
+            {                                                                      \
+                .identify_time = EZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE,     \
+            },                                                                     \
+        .groups_cfg =                                                              \
+            {                                                                      \
+                .name_support = EZB_ZCL_GROUPS_NAME_SUPPORT_DEFAULT_VALUE,         \
+            },                                                                     \
+        .scenes_cfg =                                                              \
+            {                                                                      \
+                .scene_count      = EZB_ZCL_SCENES_SCENE_COUNT_DEFAULT_VALUE,      \
+                .current_scene    = EZB_ZCL_SCENES_CURRENT_SCENE_DEFAULT_VALUE,    \
+                .current_group    = EZB_ZCL_SCENES_CURRENT_GROUP_DEFAULT_VALUE,    \
+                .scene_valid      = EZB_ZCL_SCENES_SCENE_VALID_DEFAULT_VALUE,      \
+                .name_support     = EZB_ZCL_SCENES_NAME_SUPPORT_DEFAULT_VALUE,     \
+                .scene_table_size = EZB_ZCL_SCENES_SCENE_TABLE_SIZE_DEFAULT_VALUE, \
+            },                                                                     \
+        .on_off_cfg = {                                                            \
+            .on_off = EZB_ZCL_ON_OFF_ON_OFF_MAX_VALUE,                         \
+        },                                                                         \
+    }
+
+
 /* Firmware version string exposed via ZCL Basic cluster, attribute SWBuildID (0x4000).
  * Format: ZCL character string (Pascal-style, length-prefixed).
  *
@@ -25,7 +55,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   MINOR -> non-disruptive feature
  *   PATCH -> bugfix only */
 #define ESP_SW_BUILD_ID       "\x05" "7.0.0"
-#define EP_ID (10)
+#define EP_ID (1)
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U

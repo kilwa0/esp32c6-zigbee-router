@@ -4,6 +4,7 @@
 #include "esp_ieee802154.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "esp_ota_ops.h"
 #include "alarm_timer.h"
 #include "led_strip.h"
 #include "led_strip_types.h"
@@ -21,6 +22,11 @@
 
 #include "router.h"
 #include "button.h"
+#include "ota_file_parser.h"
+
+static const esp_partition_t    *s_ota_partition   = NULL;
+static esp_zb_ota_file_parser_t *s_ota_file_parser = NULL;
+static esp_ota_handle_t          s_ota_handle      = 0;
 
 static const char *TAG = "ROUTER ESP32C6";
 
@@ -259,40 +265,89 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 /* ZCL OTA Upgrade cluster callbacks */
 void ota_upgrade_client_handle_ota_progress(ezb_zcl_ota_upgrade_client_progress_message_t *message)
 {
+    esp_err_t ret = ESP_OK;
     ESP_LOGI(TAG, "-- OTA Upgrade Client Progress");
 
     switch (message->in.progress) {
     case EZB_ZCL_OTA_UPGRADE_PROGRESS_START:
         ESP_LOGI(TAG, "OTA Start: manuf_code=0x%04x, image_type=0x%04x, file_version=0x%08lx, image_size=%ld",
-                message->in.start.manuf_code, message->in.start.image_type, message->in.start.file_version,
-                message->in.start.image_size);
+                 message->in.start.manuf_code, message->in.start.image_type, message->in.start.file_version,
+                 message->in.start.image_size);
 
+        s_ota_partition = esp_ota_get_next_update_partition(NULL);
+        ESP_GOTO_ON_FALSE(s_ota_partition, ESP_ERR_NOT_FOUND, exit, TAG, "No OTA partition found");
+        s_ota_file_parser = esp_zb_create_ota_file_parser(message->in.start.image_size);
+        ESP_GOTO_ON_FALSE(s_ota_file_parser, ESP_ERR_NOT_FOUND, exit, TAG, "Failed to create OTA file parser");
+#if CONFIG_ZB_DELTA_OTA
+            ret = esp_delta_ota_begin(s_ota_partition, 0, &s_ota_handle);
+#else
+            ret = esp_ota_begin(s_ota_partition, 0, &s_ota_handle);
+#endif
+
+        ESP_GOTO_ON_FALSE(s_ota_handle, ESP_ERR_NOT_FOUND, exit, TAG, "Failed to start OTA");
         break;
     case EZB_ZCL_OTA_UPGRADE_PROGRESS_RECEIVING:
         ESP_LOGI(TAG, "OTA Receiving Block: file_offset=%ld, block_size=%d", message->in.receiving.file_offset,
-                message->in.receiving.block_size);
+                 message->in.receiving.block_size);
+        esp_zb_ota_file_parser_setup(s_ota_file_parser, message->in.receiving.block_size, message->in.receiving.block);
+        do {
+            ret = esp_zb_ota_file_parser_process(s_ota_file_parser);
+            ESP_LOGW(TAG, "In progress: [%ld / %ld]", message->in.receiving.file_offset + message->in.receiving.block_size, s_ota_file_parser->total_image_size);
+            if (esp_zb_ota_file_parser_is_element_value(s_ota_file_parser)) {
+                switch (s_ota_file_parser->element.type) {
+                case UPGRADE_IMAGE:
+                    ESP_GOTO_ON_FALSE(s_ota_file_parser->element.total <= s_ota_partition->size, ESP_ERR_INVALID_SIZE, exit,
+                                      TAG, "OTA image size exceeds partition size");
+#if CONFIG_ZB_DELTA_OTA
+                    ESP_GOTO_ON_ERROR(esp_delta_ota_write(s_ota_handle, s_ota_file_parser->element.val, s_ota_file_parser->element.length), exit,
+                                      TAG, "Failed to write OTA image");
+#else
+                    ESP_GOTO_ON_ERROR(esp_ota_write(s_ota_handle, s_ota_file_parser->element.val, s_ota_file_parser->element.length), exit,
+                                      TAG, "Failed to write OTA image");
+#endif
+                    break;
+                default:
+                    ESP_LOG_BUFFER_HEX_LEVEL(TAG, s_ota_file_parser->element.val, s_ota_file_parser->element.length,
+                                             ESP_LOG_WARN);
+                    break;
+                }
+            }
+        } while (ret == ESP_ERR_NOT_FINISHED);
+        ret = ESP_OK;
         break;
     case EZB_ZCL_OTA_UPGRADE_PROGRESS_CHECK:
         ESP_LOGI(TAG, "OTA Check: manuf_code=0x%04x, image_type=0x%04x, file_version=0x%08lx", message->in.check.manuf_code,
-                message->in.check.image_type, message->in.check.file_version);
+                 message->in.check.image_type, message->in.check.file_version);
+        ret = esp_zb_ota_file_parser_check(s_ota_file_parser);
         break;
     case EZB_ZCL_OTA_UPGRADE_PROGRESS_APPLY:
         ESP_LOGI(TAG, "OTA Apply: manuf_code=0x%04x, image_type=0x%04x, file_version=0x%08lx", message->in.apply.manuf_code,
-                message->in.apply.image_type, message->in.apply.file_version);
+                 message->in.apply.image_type, message->in.apply.file_version);
+#if CONFIG_ZB_DELTA_OTA
+        ret = esp_delta_ota_end(s_ota_handle);
+#else
+        ret = esp_ota_end(s_ota_handle);
+#endif
+        ESP_GOTO_ON_ERROR(ret, exit, TAG, "Failed to end OTA: error: %s", esp_err_to_name(ret));
+        ret = esp_ota_set_boot_partition(s_ota_partition);
+        ESP_GOTO_ON_ERROR(ret, exit, TAG, "Failed to set OTA boot partition, error: %s", esp_err_to_name(ret));
         break;
     case EZB_ZCL_OTA_UPGRADE_PROGRESS_FINISH:
         ESP_LOGI(TAG, "OTA Finish: count_down_delay=%ld seconds", message->in.finish.count_down_delay);
         esp_restart();
         break;
     case EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT:
+        ret = esp_ota_abort(s_ota_handle);
         ESP_LOGW(TAG, "OTA Abort");
         break;
     default:
         ESP_LOGW(TAG, "Unknown OTA progress status: %d", message->in.progress);
+        message->out.result = EZB_ZCL_STATUS_SUCCESS;
         break;
     }
 
-    message->out.result = EZB_ZCL_STATUS_SUCCESS;
+exit:
+    message->out.result = ret == ESP_OK ? EZB_ZCL_STATUS_SUCCESS : EZB_ZCL_STATUS_ABORT;
 }
 
 static void ota_client_query_next_image(ezb_zcl_ota_upgrade_query_next_image_rsp_message_t *message)
@@ -357,7 +412,7 @@ static void esp_zigbee_zcl_core_action_handler(ezb_zcl_core_action_callback_id_t
 esp_err_t esp_zigbee_register_endpoints(void)
 {
     ezb_af_device_desc_t          dev_desc   = ezb_af_create_device_desc();
-    ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_CONFIG();
+    ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_KILWA_CONFIG();
     ezb_af_ep_desc_t              ep_desc    = ezb_zha_create_on_off_light(EP_ID, &light_cfg);
     ezb_zcl_cluster_desc_t        basic_desc = {0};
     ezb_zcl_cluster_desc_t        ota_client_desc = EZB_INVALID_ZCL_CLUSTER_DESC;
@@ -379,9 +434,9 @@ esp_err_t esp_zigbee_register_endpoints(void)
     ESP_RETURN_ON_FALSE(ota_client_desc != EZB_INVALID_ZCL_CLUSTER_DESC, ESP_FAIL, TAG,
                         "OTA client cluster desc invalido");
     ESP_ERROR_CHECK(ezb_af_endpoint_add_cluster_desc(ep_desc, ota_client_desc));
-    //ESP_ERROR_CHECK(ezb_zcl_ota_upgrade_set_download_block_size(EP_ID, 223));
     ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev_desc, ep_desc));
     ESP_ERROR_CHECK(ezb_af_device_desc_register(dev_desc));
+    ESP_ERROR_CHECK(ezb_zcl_ota_upgrade_set_download_block_size(EP_ID, 223));
 
     ezb_zcl_core_action_handler_register(esp_zigbee_zcl_core_action_handler);
     ESP_LOGI(TAG, "Zigbee endpoints registered: On/Off Light (EP %d)", EP_ID);
