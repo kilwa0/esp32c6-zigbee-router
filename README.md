@@ -148,6 +148,73 @@ Defined in `main/router.h`:
 | `ROUTER_JOIN_OPEN_DURATION_S` | `255` s | Duration passed to the coordinator when opening a network-level join window |
 | `ROUTER_MAX_CHILDREN` | `6` | Maximum number of child devices the router will accept |
 | `ZIGBEE_MAIN_TASK_STACK_SIZE` | `10240` bytes | Zigbee main task stack size |
+
+---
+
+## OTA Firmware Updates
+
+The firmware includes a **ZCL OTA (Over-The-Air) Upgrade Client** implementation that allows the router to receive and apply firmware updates from a Zigbee coordinator or server.
+
+### Supported image format
+
+- **ZCL OTA Upgrade Image** (ZCL Specification Revision 23)
+- Custom streaming TLV parser (`ota_file_parser.c/h`) for memory-efficient parsing of OTA payload data blocks
+
+### Partition table
+
+A dedicated `ota_0` partition (**940 KB**) is required in `partitions.csv` to store the incoming OTA image:
+
+```csv
+ota_0,    data,   fat,      0,   0x94000,
+```
+
+### Configuration
+
+The OTA client expects upgrade images with matching identity parameters. Edit `main/router.h`:
+
+```c
+#define ESP_OTA_MANUFACTURER_ID  0x1234   // Manufacturer ID
+#define ESP_OTA_IMAGE_TYPE       0x5678   // Image Type ID
+```
+
+> **Note**: The manufacturer ID and image type ID must match the values used by the OTA server/coordinator when generating the upgrade image.
+
+### Key code components
+
+| Component | Description |
+|-----------|-------------|
+| `ota_file_parser.c/h` | Custom streaming TLV parser for ZCL OTA payload data blocks. Creates a parser context via `esp_zb_create_ota_file_parser()` and processes data via `esp_zb_ota_file_parser_process()` |
+| `router.c` | Registers the OTA Upgrade Client cluster and handles OTA progress callbacks via `ota_upgrade_client_handle_ota_progress()` |
+| Block size | **223 bytes** — maximum data block size per OTA message |
+
+### OTA progress states
+
+The OTA client reports progress through the following ZCL OTA Upgrade Client callbacks:
+
+| Signal | Meaning |
+|--------|---------|
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_START` | OTA upgrade initiated |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_RECEIVING` | Receiving image data blocks |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_CHECK` | Image download complete; verifying image |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_APPLY` | Applying image and switching boot partition |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_FINISH` | Upgrade finished; rebooting |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT` | Upgrade aborted; cleaning up |
+
+### Build requirements
+
+The OTA client requires the `app_update` component in `CMakeLists.txt`:
+
+```cmake
+idf_component_register(
+    SRCS "router.c" "ota_file_parser.c" "button.c" "silent_mode_zcl.c"
+    INCLUDE_DIRS "."
+    REQUIRES esp_zigbee_lib app_update
+)
+```
+
+---
+
+## Build requirements
 | `ROUTER_TX_POWER_LOW_DBM` | `8` dBm | Normal RF operating power |
 | `ROUTER_TX_POWER_HIGH_DBM` | `20` dBm | Boost RF power (triple-tap) |
 
