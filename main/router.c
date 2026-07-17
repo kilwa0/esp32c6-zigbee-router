@@ -353,8 +353,15 @@ void ota_upgrade_client_handle_ota_progress(ezb_zcl_ota_upgrade_client_progress_
     }
 
 exit:
+    if (ret != ESP_OK) {
+        if (s_ota_file_parser) {
+            esp_zb_free_ota_file_parser(s_ota_file_parser);
+            s_ota_file_parser = NULL;
+        }
+        s_ota_handle    = 0;
+        s_ota_partition = NULL;
+    }
     message->out.result = ret == ESP_OK ? EZB_ZCL_STATUS_SUCCESS : EZB_ZCL_STATUS_ABORT;
-}
 
 static void ota_client_query_next_image(ezb_zcl_ota_upgrade_query_next_image_rsp_message_t *message)
 {
