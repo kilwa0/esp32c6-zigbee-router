@@ -153,6 +153,70 @@ Definidas en `main/router.h`:
 
 ---
 
+## Actualizaciones de Firmware OTA
+
+El firmware incluye una implementación de **ZCL OTA (Over-The-Air) Upgrade Client** que permite al router recibir y aplicar actualizaciones de firmware desde un coordinador o servidor Zigbee.
+
+### Formato de imagen soportado
+
+- **Imagen de Actualización ZCL OTA** (Especificación ZCL Revisión 23)
+- Parser TLV en streaming personalizado (`ota_file_parser.c/h`) para análisis eficiente en memoria de bloques de datos de payload OTA
+
+### Tabla de particiones
+
+Se requiere una partición `ota_0` dedicada (**940 KB**) en `partitions.csv` para almacenar la imagen OTA entrante:
+
+```csv
+ota_0,    data,   fat,      0,   0x94000,
+```
+
+### Configuración
+
+El cliente OTA espera imágenes de actualización con parámetros de identidad coincidentes. Editar `main/router.h`:
+
+```c
+#define ESP_OTA_MANUFACTURER_ID  0x1234   // ID del fabricante
+#define ESP_OTA_IMAGE_TYPE       0x5678   // Tipo de imagen
+```
+
+> **Nota**: El ID del fabricante y el tipo de imagen deben coincidir con los valores utilizados por el servidor OTA/coordinador al generar la imagen de actualización.
+
+### Componentes clave del código
+
+| Componente | Descripción |
+|------------|-------------|
+| `ota_file_parser.c/h` | Parser TLV en streaming personalizado para bloques de datos de payload ZCL OTA. Crea un contexto de parser mediante `esp_zb_create_ota_file_parser()` y procesa datos vía `esp_zb_ota_file_parser_process()` |
+| `router.c` | Registra el cluster OTA Upgrade Client y gestiona callbacks de progreso OTA vía `ota_upgrade_client_handle_ota_progress()` |
+| Tamaño de bloque | **223 bytes** — tamaño máximo de bloque de datos por mensaje OTA |
+
+### Estados de progreso OTA
+
+El cliente OTA informa el progreso a través de los siguientes callbacks de señal Zigbee:
+
+| Señal | Significado |
+|-------|-------------|
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_START` | Actualización OTA iniciada |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_RECEIVING` | Recibiendo bloques de datos de imagen |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_DONE` | Descarga de imagen completa, verificando/aplicando |
+
+### Requisitos de compilación
+
+El cliente OTA requiere el componente `app_update` en `CMakeLists.txt`:
+
+```cmake
+idf_component_register(
+    SRCS "router.c" "ota_file_parser.c" "button.c" "silent_mode_zcl.c"
+    INCLUDE_DIRS "."
+    REQUIRES esp_zigbee_lib app_update
+)
+```
+
+---
+
+## Arquitectura del firmware
+
+---
+
 ## Arquitectura del firmware
 
 ### Ficheros principales
