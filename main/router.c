@@ -374,9 +374,12 @@ esp_err_t esp_zigbee_register_endpoints(void)
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)ESP_MANUFACTURER_NAME);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (void *)ESP_MODEL_IDENTIFIER);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, (void *)ESP_SW_BUILD_ID);
+    // MEJORADO
     ota_client_desc = ezb_zcl_ota_upgrade_create_cluster_desc(&client_default_cfg, EZB_ZCL_CLUSTER_CLIENT);
-    ezb_zcl_ota_upgrade_set_download_block_size(EP_ID, 223);
+    ESP_RETURN_ON_FALSE(ota_client_desc != EZB_INVALID_ZCL_CLUSTER_DESC, ESP_FAIL, TAG,
+                        "OTA client cluster desc invalido");
     ESP_ERROR_CHECK(ezb_af_endpoint_add_cluster_desc(ep_desc, ota_client_desc));
+    ESP_ERROR_CHECK(ezb_zcl_ota_upgrade_set_download_block_size(EP_ID, 223));
     ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev_desc, ep_desc));
     ESP_ERROR_CHECK(ezb_af_device_desc_register(dev_desc));
 
