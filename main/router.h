@@ -10,8 +10,6 @@
 _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
                "Primary channel mask contains invalid 802.15.4 channels");
 
-#define ESP_ZIGBEE_RANGE_EXTENDER_EP_ID   (1)
-
 #define ESP_ZIGBEE_TC_LINK_KEY_LEN  16U
 
 #define ESP_ZIGBEE_STORAGE_PARTITION_NAME "zb_storage"
@@ -26,8 +24,8 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   MAJOR -> new gesture, LED semantic change, new visible Zigbee parameter
  *   MINOR -> non-disruptive feature
  *   PATCH -> bugfix only */
-#define ESP_SW_BUILD_ID       "\x05" "6.0.0"
-#define EP_ID (1)
+#define ESP_SW_BUILD_ID       "\x05" "7.0.0"
+#define EP_ID (10)
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U
