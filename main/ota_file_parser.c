@@ -123,7 +123,9 @@ esp_err_t esp_zb_ota_file_parser_process(esp_zb_ota_file_parser_t *parser)
         written = ota_file_stream_format((uint8_t *)&parser->element, parser->offset, OTA_ELEMENT_HEADER_LEN, parser->in,
                                          parser->in_length);
         ota_file_parser_refresh(parser, written);
-        parser->element.total += OTA_ELEMENT_HEADER_LEN;
+        if (parser->offset >= OTA_ELEMENT_HEADER_LEN) {
+            parser->element.total += OTA_ELEMENT_HEADER_LEN;
+        }
         parser->element.length = 0;
         parser->element.val    = NULL;
         goto exit;
