@@ -191,7 +191,7 @@ El cliente OTA espera imágenes de actualización con parámetros de identidad c
 
 ### Estados de progreso OTA
 
-El cliente OTA informa el progreso a través de los siguientes callbacks de señal Zigbee:
+El cliente OTA informa el progreso a través de los siguientes callbacks del cliente ZCL OTA Upgrade:
 
 | Señal | Significado |
 |-------|-------------|
