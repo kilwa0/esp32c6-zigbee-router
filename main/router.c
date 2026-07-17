@@ -256,6 +256,64 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
     return true;
 }
 
+/* ZCL OTA Upgrade cluster callbacks */
+void ota_upgrade_client_handle_ota_progress(ezb_zcl_ota_upgrade_client_progress_message_t *message)
+{
+    ESP_LOGI(TAG, "-- OTA Upgrade Client Progress");
+
+    switch (message->in.progress) {
+    case EZB_ZCL_OTA_UPGRADE_PROGRESS_START:
+        ESP_LOGI(TAG, "OTA Start: manuf_code=0x%04x, image_type=0x%04x, file_version=0x%08lx, image_size=%ld",
+                message->in.start.manuf_code, message->in.start.image_type, message->in.start.file_version,
+                message->in.start.image_size);
+
+        break;
+    case EZB_ZCL_OTA_UPGRADE_PROGRESS_RECEIVING:
+        ESP_LOGI(TAG, "OTA Receiving Block: file_offset=%ld, block_size=%d", message->in.receiving.file_offset,
+                message->in.receiving.block_size);
+        break;
+    case EZB_ZCL_OTA_UPGRADE_PROGRESS_CHECK:
+        ESP_LOGI(TAG, "OTA Check: manuf_code=0x%04x, image_type=0x%04x, file_version=0x%08lx", message->in.check.manuf_code,
+                message->in.check.image_type, message->in.check.file_version);
+        break;
+    case EZB_ZCL_OTA_UPGRADE_PROGRESS_APPLY:
+        ESP_LOGI(TAG, "OTA Apply: manuf_code=0x%04x, image_type=0x%04x, file_version=0x%08lx", message->in.apply.manuf_code,
+                message->in.apply.image_type, message->in.apply.file_version);
+        break;
+    case EZB_ZCL_OTA_UPGRADE_PROGRESS_FINISH:
+        ESP_LOGI(TAG, "OTA Finish: count_down_delay=%ld seconds", message->in.finish.count_down_delay);
+        esp_restart();
+        break;
+    case EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT:
+        ESP_LOGW(TAG, "OTA Abort");
+        break;
+    default:
+        ESP_LOGW(TAG, "Unknown OTA progress status: %d", message->in.progress);
+        break;
+    }
+
+    message->out.result = EZB_ZCL_STATUS_SUCCESS;
+}
+
+static void ota_client_query_next_image(ezb_zcl_ota_upgrade_query_next_image_rsp_message_t *message)
+{
+    ESP_LOGI(TAG, "-- OTA Upgrade Query Next Image Response");
+
+    if (message->in.image.status == EZB_ZCL_OTA_UPGRADE_STATUS_CODE_SUCCESS) {
+        ESP_LOGI(TAG, "New image available:");
+        ESP_LOGI(TAG, "  Server address: 0x%016llx", *(uint64_t *)&message->in.image.server_address);
+        ESP_LOGI(TAG, "  Endpoint: %d", message->in.image.ep_id);
+        ESP_LOGI(TAG, "  Manufacturer code: 0x%04x", message->in.image.manuf_code);
+        ESP_LOGI(TAG, "  Image type: 0x%04x", message->in.image.image_type);
+        ESP_LOGI(TAG, "  File version: 0x%08lx", message->in.image.file_version);
+        ESP_LOGI(TAG, "  Image size: %ld bytes", message->in.image.size);
+        message->out.result = EZB_ZCL_STATUS_SUCCESS;
+    } else {
+        ESP_LOGW(TAG, "No image available, status: 0x%02x", message->in.image.status);
+        message->out.result = EZB_ZCL_STATUS_SUCCESS;
+    }
+}
+
 /* CALLBACKS */
 
 static void zcl_core_set_attr_value_handler(ezb_zcl_set_attr_value_message_t *message)
@@ -275,6 +333,12 @@ static void zcl_core_set_attr_value_handler(ezb_zcl_set_attr_value_message_t *me
 static void esp_zigbee_zcl_core_action_handler(ezb_zcl_core_action_callback_id_t callback_id, void *message)
 {
     switch (callback_id) {
+    case EZB_ZCL_CORE_OTA_UPGRADE_CLIENT_PROGRESS_CB_ID:
+        ota_upgrade_client_handle_ota_progress(message);
+        break;
+    case EZB_ZCL_CORE_OTA_UPGRADE_QUERY_NEXT_IMAGE_RSP_CB_ID:
+        ota_client_query_next_image(message);
+        break;
     case EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID:
         zcl_core_set_attr_value_handler(message);
         break;
@@ -296,11 +360,23 @@ esp_err_t esp_zigbee_register_endpoints(void)
     ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_CONFIG();
     ezb_af_ep_desc_t              ep_desc    = ezb_zha_create_on_off_light(EP_ID, &light_cfg);
     ezb_zcl_cluster_desc_t        basic_desc = {0};
+    ezb_zcl_cluster_desc_t ota_client_desc = EZB_INVALID_ZCL_CLUSTER_DESC;
+
+    ezb_zcl_ota_upgrade_cluster_client_config_t client_default_cfg = {
+        .upgrade_server_id    = EZB_ZCL_OTA_UPGRADE_UPGRADE_SERVER_ID_DEFAULT_VALUE,
+        .file_offset          = 0,
+        .image_upgrade_status = EZB_ZCL_OTA_UPGRADE_IMAGE_UPGRADE_STATUS_DEFAULT_VALUE,
+        .manufacturer_id      = 0x1234,
+        .image_type_id        = 0x5678,
+    };
 
     basic_desc = ezb_af_endpoint_get_cluster_desc(ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)ESP_MANUFACTURER_NAME);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (void *)ESP_MODEL_IDENTIFIER);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, (void *)ESP_SW_BUILD_ID);
+    ota_client_desc = ezb_zcl_ota_upgrade_create_cluster_desc(&client_default_cfg, EZB_ZCL_CLUSTER_CLIENT);
+    ezb_zcl_ota_upgrade_set_download_block_size(EP_ID, 223);
+    ESP_ERROR_CHECK(ezb_af_endpoint_add_cluster_desc(ep_desc, ota_client_desc));
     ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev_desc, ep_desc));
     ESP_ERROR_CHECK(ezb_af_device_desc_register(dev_desc));
 
