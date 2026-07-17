@@ -85,10 +85,12 @@ esp_err_t esp_zb_ota_file_parser_check(esp_zb_ota_file_parser_t *parser)
 
 esp_err_t esp_zb_ota_file_parser_process(esp_zb_ota_file_parser_t *parser)
 {
-    /* Check input validity，No more data to continue parsing */
-    if (parser && (parser->in_length == 0 || parser->in == NULL)) {
-        parser->element.length = 0;
-        parser->element.val    = NULL;
+    /* Check input validity, no more data to continue parsing */
+    if (!parser || parser->in_length == 0 || parser->in == NULL) {
+        if (parser) {
+            parser->element.length = 0;
+            parser->element.val    = NULL;
+        }
         return ESP_ERR_INVALID_ARG;
     }
 
