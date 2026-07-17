@@ -195,7 +195,10 @@ The OTA client reports progress through the following ZCL OTA Upgrade Client cal
 |--------|---------|
 | `EZB_ZCL_OTA_UPGRADE_PROGRESS_START` | OTA upgrade initiated |
 | `EZB_ZCL_OTA_UPGRADE_PROGRESS_RECEIVING` | Receiving image data blocks |
-| `EZB_ZCL_OTA_UPGRADE_PROGRESS_DONE` | Image download complete, verifying/applying |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_CHECK` | Image download complete; verifying image |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_APPLY` | Applying image and switching boot partition |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_FINISH` | Upgrade finished; rebooting |
+| `EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT` | Upgrade aborted; cleaning up |
 
 ### Build requirements
 
