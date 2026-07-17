@@ -410,12 +410,24 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
     ESP_LOGI(TAG, "Canales: primary=0x%08lx secondary=0x%08lx",
              (unsigned long)ESP_ZIGBEE_PRIMARY_CHANNEL_MASK,
              (unsigned long)ESP_ZIGBEE_SECONDARY_CHANNEL_MASK);
+    ESP_LOGI(TAG, "ZB step: set_min_join_lqi");
     ezb_nwk_set_min_join_lqi(0);
+
+    ESP_LOGI(TAG, "ZB step: set_primary_channel_set");
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(ESP_ZIGBEE_PRIMARY_CHANNEL_MASK));
+
+    ESP_LOGI(TAG, "ZB step: set_secondary_channel_set");
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(ESP_ZIGBEE_SECONDARY_CHANNEL_MASK));
+
+    ESP_LOGI(TAG, "ZB step: add_signal_handler");
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
+
+    ESP_LOGI(TAG, "ZB step: register_endpoints");
     ESP_ERROR_CHECK(esp_zigbee_register_endpoints());
+
+    ESP_LOGI(TAG, "ZB step: start");
     ESP_ERROR_CHECK(esp_zigbee_start(false));
+
     esp_zigbee_launch_mainloop();
 
     esp_zigbee_deinit();
