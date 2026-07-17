@@ -189,7 +189,7 @@ The OTA client expects upgrade images with matching identity parameters. Edit `m
 
 ### OTA progress states
 
-The OTA client reports progress through the following Zigbee signal callbacks:
+The OTA client reports progress through the following ZCL OTA Upgrade Client callbacks:
 
 | Signal | Meaning |
 |--------|---------|
