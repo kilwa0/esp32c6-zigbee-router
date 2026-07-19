@@ -56,6 +56,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
  *   PATCH -> bugfix only */
 #define ESP_SW_BUILD_ID       "\x05" "7.0.0"
 #define EP_ID (1)
+#define OTA_SERVER (0xe8f60afffefc83f8)
 
 #define ROUTER_BDB_INIT_RETRY_MS      2000U
 #define ROUTER_STEERING_RETRY_MS      5000U

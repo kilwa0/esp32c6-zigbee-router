@@ -338,7 +338,7 @@ void ota_upgrade_client_handle_ota_progress(ezb_zcl_ota_upgrade_client_progress_
         break;
         case EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT:
         ret = esp_ota_abort(s_ota_handle);
-        ESP_LOGW(TAG, "OTA Abort");
+        ESP_LOGW(TAG, "OTA Abort, error: %s", esp_err_to_name(ret));
         if (s_ota_file_parser) {
             esp_zb_free_ota_file_parser(s_ota_file_parser);
             s_ota_file_parser = NULL;
@@ -432,7 +432,7 @@ esp_err_t esp_zigbee_register_endpoints(void)
     ezb_zcl_cluster_desc_t        ota_client_desc = EZB_INVALID_ZCL_CLUSTER_DESC;
 
     ezb_zcl_ota_upgrade_cluster_client_config_t client_default_cfg = {
-        .upgrade_server_id    = EZB_ZCL_OTA_UPGRADE_UPGRADE_SERVER_ID_DEFAULT_VALUE,
+        .upgrade_server_id    = OTA_SERVER,
         .file_offset          = 0,
         .image_upgrade_status = EZB_ZCL_OTA_UPGRADE_IMAGE_UPGRADE_STATUS_DEFAULT_VALUE,
         .manufacturer_id      = 0x1234,
