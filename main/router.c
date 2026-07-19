@@ -414,7 +414,8 @@ static void esp_zigbee_zcl_core_action_handler(ezb_zcl_core_action_callback_id_t
     case EZB_ZCL_CORE_DEFAULT_RSP_CB_ID: {
         ezb_zcl_cmd_default_rsp_message_t *default_rsp = (ezb_zcl_cmd_default_rsp_message_t *)message;
         ESP_LOGI(TAG, "Received ZCL Default Response with status(0x%02x)", default_rsp->in.status_code);
-    } break;
+    }
+    break;
     default:
         ESP_LOGW(TAG, "ZCL Core Action: ID(0x%04lx)", callback_id);
         break;
@@ -443,7 +444,7 @@ esp_err_t esp_zigbee_register_endpoints(void)
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)ESP_MANUFACTURER_NAME);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (void *)ESP_MODEL_IDENTIFIER);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, (void *)ESP_SW_BUILD_ID);
-    // MEJORADO
+    // OTA client cluster
     ota_client_desc = ezb_zcl_ota_upgrade_create_cluster_desc(&client_default_cfg, EZB_ZCL_CLUSTER_CLIENT);
     ESP_RETURN_ON_FALSE(ota_client_desc != EZB_INVALID_ZCL_CLUSTER_DESC, ESP_FAIL, TAG,
                         "OTA client cluster desc invalido");
