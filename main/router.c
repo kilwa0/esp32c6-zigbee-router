@@ -427,7 +427,8 @@ static void esp_zigbee_zcl_core_action_handler(ezb_zcl_core_action_callback_id_t
 esp_err_t esp_zigbee_register_endpoints(void)
 {
     ezb_af_device_desc_t          dev_desc   = ezb_af_create_device_desc();
-    ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_KILWA_CONFIG();
+    ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_CONFIG();
+    light_cfg.on_off_cfg.on_off              = EZB_ZCL_ON_OFF_ON_OFF_MAX_VALUE; // Encendido al arrancar
     ezb_af_ep_desc_t              ep_desc    = ezb_zha_create_on_off_light(EP_ID, &light_cfg);
     ezb_zcl_cluster_desc_t        basic_desc = {0};
     ezb_zcl_cluster_desc_t        ota_client_desc = EZB_INVALID_ZCL_CLUSTER_DESC;
@@ -439,7 +440,7 @@ esp_err_t esp_zigbee_register_endpoints(void)
         .manufacturer_id      = 0x1234,
         .image_type_id        = 0x5678,
     };
-
+    light_cfg.on_off_cfg.on_off = EZB_ZCL_ON_OFF_ON_OFF_MAX_VALUE; // Encendido al arrancar
     basic_desc = ezb_af_endpoint_get_cluster_desc(ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)ESP_MANUFACTURER_NAME);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (void *)ESP_MODEL_IDENTIFIER);
