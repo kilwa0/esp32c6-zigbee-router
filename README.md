@@ -135,7 +135,9 @@ To customise manufacturer name and model, edit `main/router.h`:
 ```
 
 > **Note**: The `\xNN` prefix is the string length in ZCL format (Pascal string). Update the length byte if you modify the text.
+### Automatic On/Off State at Boot
 
+The router now automatically turns on the light endpoint at boot time. This ensures that the device is immediately functional and visible to the Zigbee network upon startup.
 ### Timing, stack and RF power constants
 
 Defined in `main/router.h`:
