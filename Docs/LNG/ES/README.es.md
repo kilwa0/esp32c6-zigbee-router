@@ -321,7 +321,7 @@ Estado por defecto al arrancar:
 
 Identidad Zigbee:
 - Modelo expuesto en Basic cluster: `ESP32-C6 Zigbee Router (DIY)`.
-- Versión de firmware expuesta: `6.0.0`.
+- Versión de firmware expuesta: `7.0.1`.
 
 ---
 
@@ -380,7 +380,7 @@ El modo boost es **volátil**: revierte a 8 dBm en el siguiente reboot. El ciclo
 
 | Atributo | ID | Tipo | Valor |
 |----------|----|------|-------|
-| `SWBuildID` | `0x4000` (`EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID`) | String | Versión del firmware (ej. `"v4.0.0"`) |
+| `SWBuildID` | `0x4000` (`EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID`) | String | Versión del firmware (ej. `"v7.0.1"`) |
 
 Este atributo es legible sobre Zigbee por el coordinador o cualquier hub. Permite identificar la versión del firmware de forma remota sin acceso físico al dispositivo.
 

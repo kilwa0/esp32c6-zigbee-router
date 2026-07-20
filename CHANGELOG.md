@@ -24,12 +24,13 @@ Versioned according to [Semantic Versioning](https://semver.org/):
 - **Structured light cluster config macro**: `EZB_ZHA_ON_OFF_LIGHT_KILWA_CONFIG()` replaces the generic `EZB_ZHA_ON_OFF_LIGHT_CONFIG()` with explicit basic, identify, groups, scenes, and on_off field initialization.
 
 ### Changed
-- Updated firmware version to **7.0.0**.
+- Updated firmware version to **7.0.1**.
 - Registered OTA Upgrade Client cluster on the On/Off Light endpoint (EP 1) with manufacturer ID `0x1234` and image type ID `0x5678`.
 - Set OTA download block size to **223 bytes** via `ezb_zcl_ota_upgrade_set_download_block_size()`.
 - Added detailed Zigbee stack step logging (`set_min_join_lqi`, `set_primary_channel_set`, `set_secondary_channel_set`, `add_signal_handler`, `register_endpoints`, `start`) for improved debugging.
 - Updated CMakeLists.txt to include `app_update` in PRIV_REQUIRES for OTA partition management support.
 - Renamed `zb_fct` partition to `kzb_fct` in partitions.csv.
+- Improved OTA error logging by including error information when OTA Abort occurs.
 
 ### Fixed
 - Removed legacy `ESP_ZIGBEE_RANGE_EXTENDER_EP_ID` macro that was no longer used.

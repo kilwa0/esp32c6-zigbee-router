@@ -338,7 +338,7 @@ void ota_upgrade_client_handle_ota_progress(ezb_zcl_ota_upgrade_client_progress_
         break;
         case EZB_ZCL_OTA_UPGRADE_PROGRESS_ABORT:
         ret = esp_ota_abort(s_ota_handle);
-        ESP_LOGW(TAG, "OTA Abort");
+        ESP_LOGW(TAG, "OTA Abort, error: %s", esp_err_to_name(ret));
         if (s_ota_file_parser) {
             esp_zb_free_ota_file_parser(s_ota_file_parser);
             s_ota_file_parser = NULL;
@@ -414,7 +414,8 @@ static void esp_zigbee_zcl_core_action_handler(ezb_zcl_core_action_callback_id_t
     case EZB_ZCL_CORE_DEFAULT_RSP_CB_ID: {
         ezb_zcl_cmd_default_rsp_message_t *default_rsp = (ezb_zcl_cmd_default_rsp_message_t *)message;
         ESP_LOGI(TAG, "Received ZCL Default Response with status(0x%02x)", default_rsp->in.status_code);
-    } break;
+    }
+    break;
     default:
         ESP_LOGW(TAG, "ZCL Core Action: ID(0x%04lx)", callback_id);
         break;
@@ -426,24 +427,25 @@ static void esp_zigbee_zcl_core_action_handler(ezb_zcl_core_action_callback_id_t
 esp_err_t esp_zigbee_register_endpoints(void)
 {
     ezb_af_device_desc_t          dev_desc   = ezb_af_create_device_desc();
-    ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_KILWA_CONFIG();
+    ezb_zha_on_off_light_config_t light_cfg  = EZB_ZHA_ON_OFF_LIGHT_CONFIG();
+    light_cfg.on_off_cfg.on_off              = EZB_ZCL_ON_OFF_ON_OFF_MAX_VALUE; // Encendido al arrancar
     ezb_af_ep_desc_t              ep_desc    = ezb_zha_create_on_off_light(EP_ID, &light_cfg);
     ezb_zcl_cluster_desc_t        basic_desc = {0};
     ezb_zcl_cluster_desc_t        ota_client_desc = EZB_INVALID_ZCL_CLUSTER_DESC;
 
     ezb_zcl_ota_upgrade_cluster_client_config_t client_default_cfg = {
-        .upgrade_server_id    = EZB_ZCL_OTA_UPGRADE_UPGRADE_SERVER_ID_DEFAULT_VALUE,
+        .upgrade_server_id    = OTA_SERVER,
         .file_offset          = 0,
         .image_upgrade_status = EZB_ZCL_OTA_UPGRADE_IMAGE_UPGRADE_STATUS_DEFAULT_VALUE,
         .manufacturer_id      = 0x1234,
         .image_type_id        = 0x5678,
     };
-
+    light_cfg.on_off_cfg.on_off = EZB_ZCL_ON_OFF_ON_OFF_MAX_VALUE; // Encendido al arrancar
     basic_desc = ezb_af_endpoint_get_cluster_desc(ep_desc, EZB_ZCL_CLUSTER_ID_BASIC, EZB_ZCL_CLUSTER_SERVER);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)ESP_MANUFACTURER_NAME);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (void *)ESP_MODEL_IDENTIFIER);
     ezb_zcl_basic_cluster_desc_add_attr(basic_desc, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, (void *)ESP_SW_BUILD_ID);
-    // MEJORADO
+    // OTA client cluster
     ota_client_desc = ezb_zcl_ota_upgrade_create_cluster_desc(&client_default_cfg, EZB_ZCL_CLUSTER_CLIENT);
     ESP_RETURN_ON_FALSE(ota_client_desc != EZB_INVALID_ZCL_CLUSTER_DESC, ESP_FAIL, TAG,
                         "OTA client cluster desc invalido");
