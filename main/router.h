@@ -19,7 +19,7 @@ _Static_assert((ESP_ZIGBEE_PRIMARY_CHANNEL_MASK & ~0x07FFF800U) == 0,
   "\x03"                                                                       \
   "DIY"
 #define ESP_MODEL_IDENTIFIER                                                   \
-  "\x1B"                                                                        \
+  "\x1B"                                                                       \
   "ESP32-C6 Zigbee Router (DIY)"
 
 /* Firmware version string exposed via ZCL Basic cluster, attribute SWBuildID
